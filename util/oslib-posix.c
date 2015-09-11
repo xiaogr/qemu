@@ -380,6 +380,22 @@ static size_t fd_getpagesize(int fd)
     return getpagesize();
 }
 
+size_t qemu_file_get_page_size(const char *path)
+{
+    size_t size = 0;
+    int fd = qemu_open(path, O_RDONLY);
+
+    if (fd < 0) {
+        fprintf(stderr, "Could not open %s.\n", path);
+        goto exit;
+    }
+
+    size = fd_getpagesize(fd);
+    qemu_close(fd);
+exit:
+    return size;
+}
+
 void os_mem_prealloc(int fd, char *area, size_t memory)
 {
     int ret;
