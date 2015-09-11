@@ -286,4 +286,5 @@ void os_mem_prealloc(int fd, char *area, size_t sz);
 
 int qemu_read_password(char *buf, int buf_size);
 
+size_t qemu_file_get_page_size(const char *mem_path);
 #endif
