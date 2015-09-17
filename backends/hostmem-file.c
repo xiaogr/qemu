@@ -9,6 +9,9 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  */
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+
 #include "qemu-common.h"
 #include "sysemu/hostmem.h"
 #include "sysemu/sysemu.h"
@@ -33,17 +36,53 @@ struct HostMemoryBackendFile {
     char *mem_path;
 };
 
+static uint64_t get_file_size(const char *file)
+{
+    struct stat stat_buf;
+    uint64_t size = 0;
+    int fd;
+
+    fd = open(file, O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+
+    if (stat(file, &stat_buf) < 0) {
+        goto exit;
+    }
+
+    if ((S_ISBLK(stat_buf.st_mode)) && !ioctl(fd, BLKGETSIZE64, &size)) {
+        goto exit;
+    }
+
+    size = lseek(fd, 0, SEEK_END);
+    if (size == -1) {
+        size = 0;
+    }
+exit:
+    close(fd);
+    return size;
+}
+
 static void
 file_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
 {
     HostMemoryBackendFile *fb = MEMORY_BACKEND_FILE(backend);
 
-    if (!backend->size) {
-        error_setg(errp, "can't create backend with size 0");
-        return;
-    }
     if (!fb->mem_path) {
         error_setg(errp, "mem-path property not set");
+        return;
+    }
+
+    if (!backend->size) {
+        /*
+         * use the whole file size if @size is not specified.
+         */
+        backend->size = get_file_size(fb->mem_path);
+    }
+
+    if (!backend->size) {
+        error_setg(errp, "can't create backend with size 0");
         return;
     }
 
