@@ -380,8 +380,9 @@ static void dimm_get_size(Object *obj, Visitor *v, void *opaque,
     int64_t value;
     MemoryRegion *mr;
     DIMMDevice *dimm = DIMM(obj);
+    DIMMDeviceClass *ddc = DIMM_GET_CLASS(obj);
 
-    mr = host_memory_backend_get_memory(dimm->hostmem, errp);
+    mr = ddc->get_memory_region(dimm);
     value = memory_region_size(mr);
 
     visit_type_int(v, &value, name, errp);
