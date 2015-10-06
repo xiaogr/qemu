@@ -49,4 +49,6 @@ typedef struct NVDIMMState NVDIMMState;
 
 void nvdimm_init_memory_state(NVDIMMState *state, MemoryRegion*system_memory,
                               MachineState *machine , uint64_t page_size);
+void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
+                             GArray *table_data, GArray *linker);
 #endif

@@ -1661,6 +1661,7 @@ static bool acpi_has_iommu(void)
 static
 void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
 {
+    PCMachineState *pcms = PC_MACHINE(qdev_get_machine());
     GArray *table_offsets;
     unsigned facs, ssdt, dsdt, rsdt;
     AcpiCpuInfo cpu;
@@ -1741,6 +1742,9 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
         acpi_add_table(table_offsets, tables_blob);
         build_dmar_q35(tables_blob, tables->linker);
     }
+
+    nvdimm_build_acpi_table(&pcms->nvdimm_memory, table_offsets, tables_blob,
+                            tables->linker);
 
     /* Add tables supplied by user (if any) */
     for (u = acpi_table_first(); u; u = acpi_table_next(u)) {

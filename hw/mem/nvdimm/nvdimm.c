@@ -26,6 +26,31 @@
 #include "hw/mem/nvdimm.h"
 #include "internal.h"
 
+static int nvdimm_built_list(Object *obj, void *opaque)
+{
+    GSList **list = opaque;
+
+    if (object_dynamic_cast(obj, TYPE_NVDIMM)) {
+        DeviceState *dev = DEVICE(obj);
+
+        /* only realized NVDIMMs matter */
+        if (dev->realized) {
+            *list = g_slist_append(*list, dev);
+        }
+    }
+
+    object_child_foreach(obj, nvdimm_built_list, opaque);
+    return 0;
+}
+
+GSList *nvdimm_get_built_list(void)
+{
+    GSList *list = NULL;
+
+    object_child_foreach(qdev_get_machine(), nvdimm_built_list, &list);
+    return list;
+}
+
 static MemoryRegion *nvdimm_get_memory_region(DIMMDevice *dimm)
 {
     NVDIMMDevice *nvdimm = NVDIMM(dimm);

@@ -32,6 +32,46 @@
 #include "hw/mem/nvdimm.h"
 #include "internal.h"
 
+static void nfit_spa_uuid_pm(uuid_le *uuid)
+{
+    uuid_le uuid_pm = UUID_LE(0x66f0d379, 0xb4f3, 0x4074, 0xac, 0x43, 0x0d,
+                              0x33, 0x18, 0xb7, 0x8c, 0xdb);
+    memcpy(uuid, &uuid_pm, sizeof(uuid_pm));
+}
+
+enum {
+    NFIT_STRUCTURE_SPA = 0,
+    NFIT_STRUCTURE_MEMDEV = 1,
+    NFIT_STRUCTURE_IDT = 2,
+    NFIT_STRUCTURE_SMBIOS = 3,
+    NFIT_STRUCTURE_DCR = 4,
+    NFIT_STRUCTURE_BDW = 5,
+    NFIT_STRUCTURE_FLUSH = 6,
+};
+
+enum {
+    EFI_MEMORY_UC = 0x1ULL,
+    EFI_MEMORY_WC = 0x2ULL,
+    EFI_MEMORY_WT = 0x4ULL,
+    EFI_MEMORY_WB = 0x8ULL,
+    EFI_MEMORY_UCE = 0x10ULL,
+    EFI_MEMORY_WP = 0x1000ULL,
+    EFI_MEMORY_RP = 0x2000ULL,
+    EFI_MEMORY_XP = 0x4000ULL,
+    EFI_MEMORY_NV = 0x8000ULL,
+    EFI_MEMORY_MORE_RELIABLE = 0x10000ULL,
+};
+
+/*
+ * NVDIMM Firmware Interface Table
+ * @signature: "NFIT"
+ */
+struct nfit {
+    ACPI_TABLE_HEADER_DEF
+    uint32_t reserved;
+} QEMU_PACKED;
+typedef struct nfit nfit;
+
 /* System Physical Address Range Structure */
 struct nfit_spa {
     uint16_t type;
@@ -40,12 +80,20 @@ struct nfit_spa {
     uint16_t flags;
     uint32_t reserved;
     uint32_t proximity_domain;
-    uint8_t type_guid[16];
+    uuid_le type_guid;
     uint64_t spa_base;
     uint64_t spa_length;
     uint64_t mem_attr;
 } QEMU_PACKED;
 typedef struct nfit_spa nfit_spa;
+
+/*
+ * Control region is strictly for management during hot add/online
+ * operation.
+ */
+#define SPA_FLAGS_ADD_ONLINE_ONLY     (1)
+/* Data in Proximity Domain field is valid. */
+#define SPA_FLAGS_PROXIMITY_VALID     (1 << 1)
 
 /* Memory Device to System Physical Address Range Mapping Structure */
 struct nfit_memdev {
@@ -91,10 +139,18 @@ struct nfit_dcr {
 } QEMU_PACKED;
 typedef struct nfit_dcr nfit_dcr;
 
+#define REVSISON_ID    1
+#define NFIT_FIC1      0x201
+
 static uint64_t nvdimm_device_structure_size(uint64_t slots)
 {
     /* each nvdimm has three structures. */
     return slots * (sizeof(nfit_spa) + sizeof(nfit_memdev) + sizeof(nfit_dcr));
+}
+
+static uint64_t get_nfit_total_size(uint64_t slots)
+{
+    return sizeof(struct nfit) + nvdimm_device_structure_size(slots);
 }
 
 static uint64_t nvdimm_acpi_memory_size(uint64_t slots, uint64_t page_size)
@@ -117,4 +173,155 @@ void nvdimm_init_memory_state(NVDIMMState *state, MemoryRegion*system_memory,
     memory_region_init(&state->mr, OBJECT(machine), "nvdimm-acpi",
                        NVDIMM_ACPI_MEM_SIZE);
     memory_region_add_subregion(system_memory, state->base, &state->mr);
+}
+
+static uint32_t nvdimm_slot_to_sn(int slot)
+{
+    return 0x123456 + slot;
+}
+
+static uint32_t nvdimm_slot_to_handle(int slot)
+{
+    return slot + 1;
+}
+
+static uint16_t nvdimm_slot_to_spa_index(int slot)
+{
+    return (slot + 1) << 1;
+}
+
+static uint32_t nvdimm_slot_to_dcr_index(int slot)
+{
+    return nvdimm_slot_to_spa_index(slot) + 1;
+}
+
+static int build_structure_spa(void *buf, NVDIMMDevice *nvdimm)
+{
+    nfit_spa *nfit_spa;
+    uint64_t addr = object_property_get_int(OBJECT(nvdimm), DIMM_ADDR_PROP,
+                                            NULL);
+    uint64_t size = object_property_get_int(OBJECT(nvdimm), DIMM_SIZE_PROP,
+                                            NULL);
+    uint32_t node = object_property_get_int(OBJECT(nvdimm), DIMM_NODE_PROP,
+                                            NULL);
+    int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                            NULL);
+
+    nfit_spa = buf;
+
+    nfit_spa->type = cpu_to_le16(NFIT_STRUCTURE_SPA);
+    nfit_spa->length = cpu_to_le16(sizeof(*nfit_spa));
+    nfit_spa->spa_index = cpu_to_le16(nvdimm_slot_to_spa_index(slot));
+    nfit_spa->flags = cpu_to_le16(SPA_FLAGS_PROXIMITY_VALID);
+    nfit_spa->proximity_domain = cpu_to_le32(node);
+    nfit_spa_uuid_pm(&nfit_spa->type_guid);
+    nfit_spa->spa_base = cpu_to_le64(addr);
+    nfit_spa->spa_length = cpu_to_le64(size);
+    nfit_spa->mem_attr = cpu_to_le64(EFI_MEMORY_WB | EFI_MEMORY_NV);
+
+    return sizeof(*nfit_spa);
+}
+
+static int build_structure_memdev(void *buf, NVDIMMDevice *nvdimm)
+{
+    nfit_memdev *nfit_memdev;
+    uint64_t addr = object_property_get_int(OBJECT(nvdimm), DIMM_ADDR_PROP,
+                                            NULL);
+    uint64_t size = object_property_get_int(OBJECT(nvdimm), DIMM_SIZE_PROP,
+                                            NULL);
+    int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                            NULL);
+    uint32_t handle = nvdimm_slot_to_handle(slot);
+
+    nfit_memdev = buf;
+    nfit_memdev->type = cpu_to_le16(NFIT_STRUCTURE_MEMDEV);
+    nfit_memdev->length = cpu_to_le16(sizeof(*nfit_memdev));
+    nfit_memdev->nfit_handle = cpu_to_le32(handle);
+    /* point to nfit_spa. */
+    nfit_memdev->spa_index = cpu_to_le16(nvdimm_slot_to_spa_index(slot));
+    /* point to nfit_dcr. */
+    nfit_memdev->dcr_index = cpu_to_le16(nvdimm_slot_to_dcr_index(slot));
+    nfit_memdev->region_len = cpu_to_le64(size);
+    nfit_memdev->region_dpa = cpu_to_le64(addr);
+    /* Only one interleave for pmem. */
+    nfit_memdev->interleave_ways = cpu_to_le16(1);
+
+    return sizeof(*nfit_memdev);
+}
+
+static int build_structure_dcr(void *buf, NVDIMMDevice *nvdimm)
+{
+    nfit_dcr *nfit_dcr;
+    int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                       NULL);
+    uint32_t sn = nvdimm_slot_to_sn(slot);
+
+    nfit_dcr = buf;
+    nfit_dcr->type = cpu_to_le16(NFIT_STRUCTURE_DCR);
+    nfit_dcr->length = cpu_to_le16(sizeof(*nfit_dcr));
+    nfit_dcr->dcr_index = cpu_to_le16(nvdimm_slot_to_dcr_index(slot));
+    nfit_dcr->vendor_id = cpu_to_le16(0x8086);
+    nfit_dcr->device_id = cpu_to_le16(1);
+    nfit_dcr->revision_id = cpu_to_le16(REVSISON_ID);
+    nfit_dcr->serial_number = cpu_to_le32(sn);
+    nfit_dcr->fic = cpu_to_le16(NFIT_FIC1);
+
+    return sizeof(*nfit_dcr);
+}
+
+static void build_device_structure(GSList *device_list, char *buf)
+{
+    buf += sizeof(nfit);
+
+    for (; device_list; device_list = device_list->next) {
+        NVDIMMDevice *nvdimm = device_list->data;
+
+        /* build System Physical Address Range Description Table. */
+        buf += build_structure_spa(buf, nvdimm);
+
+        /*
+         * build Memory Device to System Physical Address Range Mapping
+         * Table.
+         */
+        buf += build_structure_memdev(buf, nvdimm);
+
+        /* build Control Region Descriptor Table. */
+        buf += build_structure_dcr(buf, nvdimm);
+    }
+}
+
+static void build_nfit(GSList *device_list, GArray *table_offsets,
+                       GArray *table_data, GArray *linker)
+{
+    size_t total;
+    char *buf;
+    int nfit_start, nr;
+
+    nr = g_slist_length(device_list);
+    total = get_nfit_total_size(nr);
+
+    nfit_start = table_data->len;
+    acpi_add_table(table_offsets, table_data);
+
+    buf = acpi_data_push(table_data, total);
+    build_device_structure(device_list, buf);
+
+    build_header(linker, table_data, (void *)(table_data->data + nfit_start),
+                 "NFIT", table_data->len - nfit_start, 1);
+}
+
+void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
+                             GArray *table_data, GArray *linker)
+{
+    GSList *device_list = nvdimm_get_built_list();
+
+    if (!memory_region_size(&state->mr)) {
+        assert(!device_list);
+        return;
+    }
+
+    if (device_list) {
+        build_nfit(device_list, table_offsets, table_data, linker);
+        g_slist_free(device_list);
+    }
 }
