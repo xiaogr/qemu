@@ -31,6 +31,38 @@ typedef struct pc_dimms_capacity {
      Error    **errp;
 } pc_dimms_capacity;
 
+static int existing_dimms_capacity_internal(Object *obj, void *opaque)
+{
+    pc_dimms_capacity *cap = opaque;
+    uint64_t *size = &cap->size;
+
+    if (object_dynamic_cast(obj, TYPE_PC_DIMM)) {
+        DeviceState *dev = DEVICE(obj);
+
+        if (dev->realized) {
+            (*size) += object_property_get_int(obj, PC_DIMM_SIZE_PROP,
+                cap->errp);
+        }
+
+        if (cap->errp && *cap->errp) {
+            return 1;
+        }
+    }
+    object_child_foreach(obj, existing_dimms_capacity_internal, opaque);
+    return 0;
+}
+
+static uint64_t existing_dimms_capacity(Error **errp)
+{
+    pc_dimms_capacity cap;
+
+    cap.size = 0;
+    cap.errp = errp;
+
+    existing_dimms_capacity_internal(qdev_get_machine(), &cap);
+    return cap.size;
+}
+
 void pc_dimm_memory_plug(DeviceState *dev, MemoryHotplugState *hpms,
                          MemoryRegion *mr, uint64_t align, bool gap,
                          Error **errp)
@@ -39,7 +71,7 @@ void pc_dimm_memory_plug(DeviceState *dev, MemoryHotplugState *hpms,
     MachineState *machine = MACHINE(qdev_get_machine());
     PCDIMMDevice *dimm = PC_DIMM(dev);
     Error *local_err = NULL;
-    uint64_t existing_dimms_capacity = 0;
+    uint64_t dimms_capacity = 0;
     uint64_t addr;
 
     addr = object_property_get_int(OBJECT(dimm), PC_DIMM_ADDR_PROP, &local_err);
@@ -55,17 +87,16 @@ void pc_dimm_memory_plug(DeviceState *dev, MemoryHotplugState *hpms,
         goto out;
     }
 
-    existing_dimms_capacity = pc_existing_dimms_capacity(&local_err);
+    dimms_capacity = existing_dimms_capacity(&local_err);
     if (local_err) {
         goto out;
     }
 
-    if (existing_dimms_capacity + memory_region_size(mr) >
+    if (dimms_capacity + memory_region_size(mr) >
         machine->maxram_size - machine->ram_size) {
         error_setg(&local_err, "not enough space, currently 0x%" PRIx64
                    " in use of total hot pluggable 0x" RAM_ADDR_FMT,
-                   existing_dimms_capacity,
-                   machine->maxram_size - machine->ram_size);
+                   dimms_capacity, machine->maxram_size - machine->ram_size);
         goto out;
     }
 
@@ -112,38 +143,6 @@ void pc_dimm_memory_unplug(DeviceState *dev, MemoryHotplugState *hpms,
     numa_unset_mem_node_id(dimm->addr, memory_region_size(mr), dimm->node);
     memory_region_del_subregion(&hpms->mr, mr);
     vmstate_unregister_ram(mr, dev);
-}
-
-static int pc_existing_dimms_capacity_internal(Object *obj, void *opaque)
-{
-    pc_dimms_capacity *cap = opaque;
-    uint64_t *size = &cap->size;
-
-    if (object_dynamic_cast(obj, TYPE_PC_DIMM)) {
-        DeviceState *dev = DEVICE(obj);
-
-        if (dev->realized) {
-            (*size) += object_property_get_int(obj, PC_DIMM_SIZE_PROP,
-                cap->errp);
-        }
-
-        if (cap->errp && *cap->errp) {
-            return 1;
-        }
-    }
-    object_child_foreach(obj, pc_existing_dimms_capacity_internal, opaque);
-    return 0;
-}
-
-uint64_t pc_existing_dimms_capacity(Error **errp)
-{
-    pc_dimms_capacity cap;
-
-    cap.size = 0;
-    cap.errp = errp;
-
-    pc_existing_dimms_capacity_internal(qdev_get_machine(), &cap);
-    return cap.size;
 }
 
 int qmp_pc_dimm_device_list(Object *obj, void *opaque)
