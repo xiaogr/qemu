@@ -281,6 +281,7 @@ Aml *aml_mutex(const char *name, uint8_t flags);
 Aml *aml_acquire(Aml *mutex, uint16_t timeout);
 Aml *aml_release(Aml *mutex);
 Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
+Aml *aml_object_type(Aml *object);
 
 void
 build_header(GArray *linker, GArray *table_data,
