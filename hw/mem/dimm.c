@@ -135,8 +135,15 @@ void dimm_memory_plug(DeviceState *dev, MemoryHotplugState *hpms,
     }
 
     memory_region_add_subregion(&hpms->mr, addr - hpms->base, mr);
-    vmstate_register_ram(mr, dev);
     numa_set_mem_node_id(addr, memory_region_size(mr), dimm->node);
+
+    /*
+     * save the state only for @mr is not enough as it does not contain
+     * the label data of NVDIMM device, so that we keep the state of
+     * whole hostmem instead.
+     */
+    vmstate_register_ram(host_memory_backend_get_memory(dimm->hostmem, errp),
+                         dev);
 
 out:
     error_propagate(errp, local_err);
@@ -146,10 +153,13 @@ void dimm_memory_unplug(DeviceState *dev, MemoryHotplugState *hpms,
                            MemoryRegion *mr)
 {
     DIMMDevice *dimm = DIMM(dev);
+    MemoryRegion *backend_mr;
+
+    backend_mr = host_memory_backend_get_memory(dimm->hostmem, &error_abort);
 
     numa_unset_mem_node_id(dimm->addr, memory_region_size(mr), dimm->node);
     memory_region_del_subregion(&hpms->mr, mr);
-    vmstate_unregister_ram(mr, dev);
+    vmstate_unregister_ram(backend_mr, dev);
 }
 
 int qmp_dimm_device_list(Object *obj, void *opaque)
