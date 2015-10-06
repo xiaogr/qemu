@@ -276,6 +276,7 @@ Aml *aml_touuid(const char *uuid);
 Aml *aml_unicode(const char *str);
 Aml *aml_derefof(Aml *arg);
 Aml *aml_sizeof(Aml *arg);
+Aml *aml_create_field(Aml *srcbuf, Aml *index, Aml *len, const char *name);
 
 void
 build_header(GArray *linker, GArray *table_data,
