@@ -280,6 +280,7 @@ Aml *aml_create_field(Aml *srcbuf, Aml *index, Aml *len, const char *name);
 Aml *aml_mutex(const char *name, uint8_t flags);
 Aml *aml_acquire(Aml *mutex, uint16_t timeout);
 Aml *aml_release(Aml *mutex);
+Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
 
 void
 build_header(GArray *linker, GArray *table_data,
