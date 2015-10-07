@@ -442,7 +442,7 @@ static void build_nvdimm_devices(NVDIMMState *state, GSList *device_list,
         int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
                                            NULL);
         uint32_t handle = nvdimm_slot_to_handle(slot);
-        Aml *dev, *method;
+        Aml *dev, *method, *ifctx;
 
         dev = aml_device("NV%02X", slot);
         aml_append(dev, aml_name_decl("_ADR", aml_int(handle)));
@@ -452,6 +452,24 @@ static void build_nvdimm_devices(NVDIMMState *state, GSList *device_list,
         method = aml_method("_DSM", 4);
         {
             SAVE_ARG012_HANDLE_LOCK(method, aml_int(handle));
+
+            /* Arg3 is passed as Package and it has one element? */
+            ifctx = aml_if(aml_and(aml_equal(aml_object_type(aml_arg(3)),
+                                             aml_int(4)),
+                                   aml_equal(aml_sizeof(aml_arg(3)),
+                                             aml_int(1))));
+            {
+                /* Local0 = Index(Arg3, 0) */
+                aml_append(ifctx, aml_store(aml_index(aml_arg(3), aml_int(0)),
+                                            aml_local(0)));
+                /* Local3 = DeRefOf(Local0) */
+                aml_append(ifctx, aml_store(aml_derefof(aml_local(0)),
+                                            aml_local(3)));
+                /* ARG3 = Local3 */
+                aml_append(ifctx, aml_store(aml_local(3), aml_name("ARG3")));
+            }
+            aml_append(method, ifctx);
+
             NOTIFY_AND_RETURN_UNLOCK(method);
         }
         aml_append(dev, method);
@@ -534,6 +552,7 @@ static void nvdimm_build_acpi_devices(NVDIMMState *state, GSList *device_list,
     method = aml_method("_DSM", 4);
     {
         SAVE_ARG012_HANDLE_LOCK(method, aml_int(0));
+        /* no command we support on ROOT device has Arg3. */
         NOTIFY_AND_RETURN_UNLOCK(method);
     }
     aml_append(dev, method);
