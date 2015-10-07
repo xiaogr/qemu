@@ -1,1 +1,2 @@
-common-obj-$(CONFIG_MEM_HOTPLUG) += dimm.o
+common-obj-$(CONFIG_DIMM) += dimm.o
+common-obj-$(CONFIG_MEM_HOTPLUG) += pc-dimm.o

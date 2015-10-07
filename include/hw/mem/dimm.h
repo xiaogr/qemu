@@ -1,5 +1,5 @@
 /*
- * PC DIMM device
+ * Dimm device abstraction
  *
  * Copyright ProfitBricks GmbH 2012
  * Copyright (C) 2013-2014 Red Hat Inc
@@ -20,7 +20,7 @@
 #include "sysemu/hostmem.h"
 #include "hw/qdev.h"
 
-#define TYPE_DIMM "pc-dimm"
+#define TYPE_DIMM "dimm"
 #define DIMM(obj) \
     OBJECT_CHECK(DIMMDevice, (obj), TYPE_DIMM)
 #define DIMM_CLASS(oc) \
