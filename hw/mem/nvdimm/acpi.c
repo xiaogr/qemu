@@ -379,13 +379,29 @@ enum {
                            | (1 << DSM_CMD_GET_NAMESPACE_LABEL_DATA)  \
                            | (1 << DSM_CMD_SET_NAMESPACE_LABEL_DATA))
 
+struct cmd_in_get_label_data {
+    uint32_t offset;
+    uint32_t length;
+} QEMU_PACKED;
+typedef struct cmd_in_get_label_data cmd_in_get_label_data;
+
+struct cmd_in_set_label_data {
+    uint32_t offset;
+    uint32_t length;
+    uint8_t in_buf[0];
+} QEMU_PACKED;
+typedef struct cmd_in_set_label_data cmd_in_set_label_data;
+
 struct dsm_in {
     uint32_t handle;
     uint8_t arg0[16];
     uint32_t arg1;
     uint32_t arg2;
    /* the remaining size in the page is used by arg3. */
-    uint8_t arg3[0];
+    union {
+        uint8_t arg3[0];
+        cmd_in_set_label_data cmd_set_label_data;
+    };
 } QEMU_PACKED;
 typedef struct dsm_in dsm_in;
 
@@ -394,6 +410,19 @@ struct cmd_out_implemented {
 };
 typedef struct cmd_out_implemented cmd_out_implemented;
 
+struct cmd_out_label_size {
+    uint32_t status;
+    uint32_t label_size;
+    uint32_t max_xfer;
+} QEMU_PACKED;
+typedef struct cmd_out_label_size cmd_out_label_size;
+
+struct cmd_out_get_label_data {
+    uint32_t status;
+    uint8_t out_buf[0];
+} QEMU_PACKED;
+typedef struct cmd_out_get_label_data cmd_out_get_label_data;
+
 struct dsm_out {
     /* the size of buffer filled by QEMU. */
     uint16_t len;
@@ -401,6 +430,8 @@ struct dsm_out {
         uint8_t data[0];
         uint32_t status;
         cmd_out_implemented cmd_implemented;
+        cmd_out_label_size cmd_label_size;
+        cmd_out_get_label_data cmd_get_label_data;
     };
 } QEMU_PACKED;
 typedef struct dsm_out dsm_out;
@@ -425,8 +456,56 @@ static void dsm_write_root(uint32_t function, dsm_in *in, dsm_out *out)
     nvdebug("Return status %#x.\n", out->status);
 }
 
-static void dsm_write_nvdimm(uint32_t handle, uint32_t function, dsm_in *in,
-                             dsm_out *out)
+/*
+ * the max transfer size is the max size transfered by both a
+ * DSM_CMD_GET_NAMESPACE_LABEL_DATA and a DSM_CMD_SET_NAMESPACE_LABEL_DATA
+ * command.
+ */
+static uint32_t max_xfer_label_size(MemoryRegion *dsm_ram_mr)
+{
+    dsm_in *in;
+    dsm_out *out;
+    uint32_t mr_size, max_get_size, max_set_size;
+
+    mr_size = memory_region_size(dsm_ram_mr);
+
+    /*
+     * the max data ACPI can read one time which is transfered by
+     * the response of DSM_CMD_GET_NAMESPACE_LABEL_DATA.
+     */
+    max_get_size = mr_size - offsetof(dsm_out, data) -
+                   sizeof(out->cmd_get_label_data);
+
+    /*
+     * the max data ACPI can write one time which is transfered by
+     * DSM_CMD_SET_NAMESPACE_LABEL_DATA
+     */
+    max_set_size = mr_size - offsetof(dsm_in, arg3) -
+                   sizeof(in->cmd_set_label_data);
+
+    return MIN(max_get_size, max_set_size);
+}
+
+static uint32_t
+dsm_cmd_label_size(MemoryRegion *dsm_ram_mr, NVDIMMDevice *nvdimm,
+                    dsm_out *out)
+{
+    uint32_t label_size, mxfer;
+
+    label_size = nvdimm->label_size;
+    mxfer = max_xfer_label_size(dsm_ram_mr);
+
+    out->cmd_label_size.label_size = cpu_to_le32(label_size);
+    out->cmd_label_size.max_xfer = cpu_to_le32(mxfer);
+    out->len = sizeof(out->cmd_label_size);
+
+    nvdebug("%s label_size %#x, max_xfer %#x.\n", __func__, label_size, mxfer);
+
+    return DSM_STATUS_SUCCESS;
+}
+
+static void dsm_write_nvdimm(MemoryRegion *dsm_ram_mr, uint32_t handle,
+                             uint32_t function, dsm_in *in, dsm_out *out)
 {
     GSList *list = nvdimm_get_built_list();
     NVDIMMDevice *nvdimm = get_nvdimm_device_by_handle(list, handle);
@@ -444,6 +523,9 @@ static void dsm_write_nvdimm(uint32_t handle, uint32_t function, dsm_in *in,
         out->len = sizeof(out->cmd_implemented);
         out->cmd_implemented.cmd_list = cpu_to_le64(cmd_list);
         goto free;
+    case DSM_CMD_NAMESPACE_LABEL_SIZE:
+        status = dsm_cmd_label_size(dsm_ram_mr, nvdimm, out);
+        break;
     default:
         out->len = sizeof(out->status);
         status = DSM_STATUS_NOT_SUPPORTED;
@@ -511,7 +593,7 @@ static void dsm_write(void *opaque, hwaddr addr,
         goto exit;
     }
 
-    return dsm_write_nvdimm(handle, function, in, out);
+    return dsm_write_nvdimm(dsm_ram_mr, handle, function, in, out);
 
 exit:
     out->len = sizeof(out->status);
