@@ -308,15 +308,38 @@ static void build_nfit(void *fit, GSList *device_list, GArray *table_offsets,
                  "NFIT", table_data->len - nfit_start, 1);
 }
 
+#define NOTIFY_VALUE      0x99
+
+struct dsm_in {
+    uint32_t handle;
+    uint8_t arg0[16];
+    uint32_t arg1;
+    uint32_t arg2;
+   /* the remaining size in the page is used by arg3. */
+    uint8_t arg3[0];
+} QEMU_PACKED;
+typedef struct dsm_in dsm_in;
+
+struct dsm_out {
+    /* the size of buffer filled by QEMU. */
+    uint16_t len;
+    uint8_t data[0];
+} QEMU_PACKED;
+typedef struct dsm_out dsm_out;
+
 static uint64_t dsm_read(void *opaque, hwaddr addr,
                          unsigned size)
 {
+    fprintf(stderr, "BUG: we never read DSM notification MMIO.\n");
     return 0;
 }
 
 static void dsm_write(void *opaque, hwaddr addr,
                       uint64_t val, unsigned size)
 {
+    if (val != NOTIFY_VALUE) {
+        fprintf(stderr, "BUG: unexepected notify value 0x%" PRIx64, val);
+    }
 }
 
 static const MemoryRegionOps dsm_ops = {
@@ -372,6 +395,183 @@ static MemoryRegion *build_dsm_memory(NVDIMMState *state)
     return dsm_fit_mr;
 }
 
+#define BUILD_STA_METHOD(_dev_, _method_)                                  \
+    do {                                                                   \
+        _method_ = aml_method("_STA", 0);                                  \
+        aml_append(_method_, aml_return(aml_int(0x0f)));                   \
+        aml_append(_dev_, _method_);                                       \
+    } while (0)
+
+#define SAVE_ARG012_HANDLE_LOCK(_method_, _handle_)                        \
+    do {                                                                   \
+        aml_append(_method_, aml_acquire(aml_name("NLCK"), 0xFFFF));       \
+        aml_append(_method_, aml_store(_handle_, aml_name("HDLE")));       \
+        aml_append(_method_, aml_store(aml_arg(0), aml_name("ARG0")));     \
+        aml_append(_method_, aml_store(aml_arg(1), aml_name("ARG1")));     \
+        aml_append(_method_, aml_store(aml_arg(2), aml_name("ARG2")));     \
+    } while (0)
+
+#define NOTIFY_AND_RETURN_UNLOCK(_method_)                           \
+    do {                                                                   \
+        aml_append(_method_, aml_store(aml_int(NOTIFY_VALUE),              \
+                   aml_name("NOTI")));                                     \
+        aml_append(_method_, aml_store(aml_name("RLEN"), aml_local(6)));   \
+        aml_append(_method_, aml_store(aml_shiftleft(aml_local(6),         \
+                      aml_int(3)), aml_local(6)));                         \
+        aml_append(_method_, aml_create_field(aml_name("ODAT"), aml_int(0),\
+                                              aml_local(6) , "OBUF"));     \
+        aml_append(_method_, aml_name_decl("ZBUF", aml_buffer(0, NULL)));  \
+        aml_append(_method_, aml_concatenate(aml_name("ZBUF"),             \
+                                          aml_name("OBUF"), aml_arg(6)));  \
+        aml_append(_method_, aml_release(aml_name("NLCK")));               \
+        aml_append(_method_, aml_return(aml_arg(6)));                      \
+    } while (0)
+
+#define BUILD_FIELD_UNIT_STRUCT(_field_, _s_, _f_, _name_)                 \
+    aml_append(_field_, aml_named_field(_name_,                            \
+               sizeof(typeof_field(_s_, _f_)) * BITS_PER_BYTE))
+
+#define BUILD_FIELD_UNIT_SIZE(_field_, _byte_, _name_)                     \
+    aml_append(_field_, aml_named_field(_name_, (_byte_) * BITS_PER_BYTE))
+
+static void build_nvdimm_devices(NVDIMMState *state, GSList *device_list,
+                                 Aml *root_dev)
+{
+    for (; device_list; device_list = device_list->next) {
+        NVDIMMDevice *nvdimm = device_list->data;
+        int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                           NULL);
+        uint32_t handle = nvdimm_slot_to_handle(slot);
+        Aml *dev, *method;
+
+        dev = aml_device("NV%02X", slot);
+        aml_append(dev, aml_name_decl("_ADR", aml_int(handle)));
+
+        BUILD_STA_METHOD(dev, method);
+
+        method = aml_method("_DSM", 4);
+        {
+            SAVE_ARG012_HANDLE_LOCK(method, aml_int(handle));
+            NOTIFY_AND_RETURN_UNLOCK(method);
+        }
+        aml_append(dev, method);
+
+        aml_append(root_dev, dev);
+    }
+}
+
+static void nvdimm_build_acpi_devices(NVDIMMState *state, GSList *device_list,
+                                      Aml *sb_scope)
+{
+    Aml *dev, *method, *field;
+    int fit_size = nvdimm_device_structure_size(g_slist_length(device_list));
+
+    dev = aml_device("NVDR");
+    aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0012")));
+
+    /* map DSM memory into ACPI namespace. */
+    aml_append(dev, aml_operation_region("NMIO", AML_SYSTEM_MEMORY,
+               state->base, state->page_size));
+    aml_append(dev, aml_operation_region("NRAM", AML_SYSTEM_MEMORY,
+               state->base + state->page_size, state->page_size));
+    aml_append(dev, aml_operation_region("NFIT", AML_SYSTEM_MEMORY,
+               state->base + state->page_size * 2,
+               memory_region_size(&state->mr) - state->page_size * 2));
+
+    /*
+     * DSM notifier:
+     * @NOTI: write value to it will notify QEMU that _DSM method is being
+     *        called and the parameters can be found in dsm_in.
+     *
+     * It is MMIO mapping on host so that it will cause VM-exit then QEMU
+     * gets control.
+     */
+    field = aml_field("NMIO", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_SIZE(field, sizeof(uint32_t), "NOTI");
+    aml_append(dev, field);
+
+    /*
+     * DSM input:
+     * @HDLE: store device's handle, it's zero if the _DSM call happens
+     *        on ROOT.
+     * @ARG0 ~ @ARG3: store the parameters of _DSM call.
+     *
+     * They are ram mapping on host so that these accesses never cause
+     * VM-EXIT.
+     */
+    field = aml_field("NRAM", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_STRUCT(field, dsm_in, handle, "HDLE");
+    BUILD_FIELD_UNIT_STRUCT(field, dsm_in, arg0, "ARG0");
+    BUILD_FIELD_UNIT_STRUCT(field, dsm_in, arg1, "ARG1");
+    BUILD_FIELD_UNIT_STRUCT(field, dsm_in, arg2, "ARG2");
+    BUILD_FIELD_UNIT_SIZE(field, state->page_size - offsetof(dsm_in, arg3),
+                          "ARG3");
+    aml_append(dev, field);
+
+    /*
+     * DSM output:
+     * @RLEN: the size of buffer filled by QEMU
+     * @ODAT: the buffer QEMU uses to store the result
+     *
+     * Since the page is reused by both input and out, the input data
+     * will be lost after storing new result into @RLEN and @ODAT
+    */
+    field = aml_field("NRAM", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_STRUCT(field, dsm_out, len, "RLEN");
+    BUILD_FIELD_UNIT_SIZE(field, state->page_size - offsetof(dsm_out, data),
+                          "ODAT");
+    aml_append(dev, field);
+
+    /* @RFIT, returned by _FIT method. */
+    field = aml_field("NFIT", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_SIZE(field, fit_size, "RFIT");
+    aml_append(dev, field);
+
+    aml_append(dev, aml_mutex("NLCK", 0));
+
+    BUILD_STA_METHOD(dev, method);
+
+    method = aml_method("_DSM", 4);
+    {
+        SAVE_ARG012_HANDLE_LOCK(method, aml_int(0));
+        NOTIFY_AND_RETURN_UNLOCK(method);
+    }
+    aml_append(dev, method);
+
+    method = aml_method("_FIT", 0);
+    {
+        aml_append(method, aml_return(aml_name("RFIT")));
+    }
+    aml_append(dev, method);
+
+    build_nvdimm_devices(state, device_list, dev);
+
+    aml_append(sb_scope, dev);
+}
+
+static void nvdimm_build_ssdt(NVDIMMState *state, GSList *device_list,
+                              GArray *table_offsets, GArray *table_data,
+                              GArray *linker)
+{
+    Aml *ssdt, *sb_scope;
+
+    acpi_add_table(table_offsets, table_data);
+
+    ssdt = init_aml_allocator();
+    acpi_data_push(ssdt->buf, sizeof(AcpiTableHeader));
+
+    sb_scope = aml_scope("\\_SB");
+    nvdimm_build_acpi_devices(state, device_list, sb_scope);
+
+    aml_append(ssdt, sb_scope);
+    /* copy AML table into ACPI tables blob and patch header there */
+    g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
+    build_header(linker, table_data,
+        (void *)(table_data->data + table_data->len - ssdt->buf->len),
+        "SSDT", ssdt->buf->len, 1);
+    free_aml_allocator();
+}
+
 void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
                              GArray *table_data, GArray *linker)
 {
@@ -387,6 +587,9 @@ void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
 
         build_device_structure(device_list, fit);
         build_nfit(fit, device_list, table_offsets, table_data, linker);
+
+        nvdimm_build_ssdt(state, device_list, table_offsets, table_data,
+                          linker);
         g_slist_free(device_list);
     }
 }
