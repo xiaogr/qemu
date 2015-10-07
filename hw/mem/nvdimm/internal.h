@@ -13,6 +13,14 @@
 #ifndef NVDIMM_INTERNAL_H
 #define NVDIMM_INTERNAL_H
 
+#define NVDIMM_DEBUG 0
+#define nvdebug(fmt, ...)                                     \
+    do {                                                      \
+        if (NVDIMM_DEBUG) {                                   \
+            fprintf(stderr, "nvdimm: " fmt, ## __VA_ARGS__);  \
+        }                                                     \
+    } while (0)
+
 #define MIN_NAMESPACE_LABEL_SIZE    (128UL << 10)
 
 struct uuid_le {

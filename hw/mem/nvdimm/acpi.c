@@ -271,8 +271,6 @@ static int build_structure_dcr(void *buf, NVDIMMDevice *nvdimm)
 
 static void build_device_structure(GSList *device_list, char *buf)
 {
-    buf += sizeof(nfit);
-
     for (; device_list; device_list = device_list->next) {
         NVDIMMDevice *nvdimm = device_list->data;
 
@@ -290,7 +288,7 @@ static void build_device_structure(GSList *device_list, char *buf)
     }
 }
 
-static void build_nfit(GSList *device_list, GArray *table_offsets,
+static void build_nfit(void *fit, GSList *device_list, GArray *table_offsets,
                        GArray *table_data, GArray *linker)
 {
     size_t total;
@@ -304,10 +302,74 @@ static void build_nfit(GSList *device_list, GArray *table_offsets,
     acpi_add_table(table_offsets, table_data);
 
     buf = acpi_data_push(table_data, total);
-    build_device_structure(device_list, buf);
+    memcpy(buf + sizeof(nfit), fit, total - sizeof(nfit));
 
     build_header(linker, table_data, (void *)(table_data->data + nfit_start),
                  "NFIT", table_data->len - nfit_start, 1);
+}
+
+static uint64_t dsm_read(void *opaque, hwaddr addr,
+                         unsigned size)
+{
+    return 0;
+}
+
+static void dsm_write(void *opaque, hwaddr addr,
+                      uint64_t val, unsigned size)
+{
+}
+
+static const MemoryRegionOps dsm_ops = {
+    .read = dsm_read,
+    .write = dsm_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+static MemoryRegion *build_dsm_memory(NVDIMMState *state)
+{
+    MemoryRegion *dsm_ram_mr, *dsm_mmio_mr, *dsm_fit_mr;
+    uint64_t fit_size = memory_region_size(&state->mr) - state->page_size * 2;
+
+    /* DSM memory has already been built. */
+    dsm_fit_mr = memory_region_find(&state->mr, state->page_size * 2,
+                                    fit_size).mr;
+    if (dsm_fit_mr) {
+        nvdebug("DSM FIT has already been built by %s.\n", dsm_fit_mr->name);
+        memory_region_unref(dsm_fit_mr);
+        return dsm_fit_mr;
+    }
+
+    /*
+     * the first page is MMIO-based used to transfer control from guest
+     * ACPI to QEMU.
+     */
+    dsm_mmio_mr = g_new(MemoryRegion, 1);
+    memory_region_init_io(dsm_mmio_mr, NULL, &dsm_ops, state,
+                          "nvdimm.dsm_mmio", state->page_size);
+
+    /*
+     * the second page is RAM-based used to transfer data between guest
+     * ACPI and QEMU.
+     */
+    dsm_ram_mr = g_new(MemoryRegion, 1);
+    memory_region_init_ram(dsm_ram_mr, NULL, "nvdimm.dsm_ram",
+                           state->page_size, &error_abort);
+    vmstate_register_ram_global(dsm_ram_mr);
+
+    /*
+     * the left is RAM-based which is _FIT buffer returned by _FIT
+     * method.
+     */
+    dsm_fit_mr = g_new(MemoryRegion, 1);
+    memory_region_init_ram(dsm_fit_mr, NULL, "nvdimm.fit", fit_size,
+                           &error_abort);
+    vmstate_register_ram_global(dsm_fit_mr);
+
+    memory_region_add_subregion(&state->mr, 0, dsm_mmio_mr);
+    memory_region_add_subregion(&state->mr, state->page_size, dsm_ram_mr);
+    memory_region_add_subregion(&state->mr, state->page_size * 2, dsm_fit_mr);
+
+    return dsm_fit_mr;
 }
 
 void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
@@ -321,7 +383,10 @@ void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
     }
 
     if (device_list) {
-        build_nfit(device_list, table_offsets, table_data, linker);
+        void *fit = memory_region_get_ram_ptr(build_dsm_memory(state));
+
+        build_device_structure(device_list, fit);
+        build_nfit(fit, device_list, table_offsets, table_data, linker);
         g_slist_free(device_list);
     }
 }
