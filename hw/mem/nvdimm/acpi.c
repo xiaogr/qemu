@@ -401,6 +401,7 @@ struct dsm_in {
     union {
         uint8_t arg3[0];
         cmd_in_set_label_data cmd_set_label_data;
+        cmd_in_get_label_data cmd_get_label_data;
     };
 } QEMU_PACKED;
 typedef struct dsm_in dsm_in;
@@ -504,6 +505,35 @@ dsm_cmd_label_size(MemoryRegion *dsm_ram_mr, NVDIMMDevice *nvdimm,
     return DSM_STATUS_SUCCESS;
 }
 
+static uint32_t dsm_cmd_get_label_data(NVDIMMDevice *nvdimm, dsm_in *in,
+                                       dsm_out *out)
+{
+    cmd_in_get_label_data *cmd_in = &in->cmd_get_label_data;
+    uint32_t length, offset, status;
+
+    length = cmd_in->length;
+    offset = cmd_in->offset;
+    le32_to_cpus(&length);
+    le32_to_cpus(&offset);
+
+    nvdebug("Read Label Data: offset %#x length %#x.\n", offset, length);
+
+    if (nvdimm->label_size < length + offset) {
+        nvdebug("position %#x is beyond label data (len = %#lx).\n",
+                length + offset, nvdimm->label_size);
+        out->len = sizeof(out->status);
+        status = DSM_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    status = DSM_STATUS_SUCCESS;
+    memcpy(out->cmd_get_label_data.out_buf, nvdimm->label_data +
+           offset, length);
+    out->len = sizeof(out->cmd_get_label_data) + length;
+exit:
+    return status;
+}
+
 static void dsm_write_nvdimm(MemoryRegion *dsm_ram_mr, uint32_t handle,
                              uint32_t function, dsm_in *in, dsm_out *out)
 {
@@ -525,6 +555,9 @@ static void dsm_write_nvdimm(MemoryRegion *dsm_ram_mr, uint32_t handle,
         goto free;
     case DSM_CMD_NAMESPACE_LABEL_SIZE:
         status = dsm_cmd_label_size(dsm_ram_mr, nvdimm, out);
+        break;
+    case DSM_CMD_GET_NAMESPACE_LABEL_DATA:
+        status = dsm_cmd_get_label_data(nvdimm, in, out);
         break;
     default:
         out->len = sizeof(out->status);
