@@ -424,6 +424,11 @@ struct cmd_out_get_label_data {
 } QEMU_PACKED;
 typedef struct cmd_out_get_label_data cmd_out_get_label_data;
 
+struct cmd_out_set_label_data {
+    uint32_t status;
+};
+typedef struct cmd_out_set_label_data cmd_out_set_label_data;
+
 struct dsm_out {
     /* the size of buffer filled by QEMU. */
     uint16_t len;
@@ -433,6 +438,7 @@ struct dsm_out {
         cmd_out_implemented cmd_implemented;
         cmd_out_label_size cmd_label_size;
         cmd_out_get_label_data cmd_get_label_data;
+        cmd_out_set_label_data cmd_set_label_data;
     };
 } QEMU_PACKED;
 typedef struct dsm_out dsm_out;
@@ -534,6 +540,33 @@ exit:
     return status;
 }
 
+static uint32_t
+dsm_cmd_set_label_data(NVDIMMDevice *nvdimm, dsm_in *in, dsm_out *out)
+{
+    cmd_in_set_label_data *cmd_in = &in->cmd_set_label_data;
+    uint32_t length, offset, status;
+
+    length = cmd_in->length;
+    offset = cmd_in->offset;
+    le32_to_cpus(&length);
+    le32_to_cpus(&offset);
+
+    nvdebug("Write Label Data: offset %#x length %#x.\n", offset, length);
+    if (nvdimm->label_size < length + offset) {
+        nvdebug("position %#x is beyond config data (len = %#lx).\n",
+                length + offset, nvdimm->label_size);
+        out->len = sizeof(out->status);
+        status = DSM_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    status = DSM_STATUS_SUCCESS;
+    memcpy(nvdimm->label_data + offset, cmd_in->in_buf, length);
+    out->len = sizeof(status);
+exit:
+    return status;
+}
+
 static void dsm_write_nvdimm(MemoryRegion *dsm_ram_mr, uint32_t handle,
                              uint32_t function, dsm_in *in, dsm_out *out)
 {
@@ -558,6 +591,9 @@ static void dsm_write_nvdimm(MemoryRegion *dsm_ram_mr, uint32_t handle,
         break;
     case DSM_CMD_GET_NAMESPACE_LABEL_DATA:
         status = dsm_cmd_get_label_data(nvdimm, in, out);
+        break;
+    case DSM_CMD_SET_NAMESPACE_LABEL_DATA:
+        status = dsm_cmd_set_label_data(nvdimm, in, out);
         break;
     default:
         out->len = sizeof(out->status);
