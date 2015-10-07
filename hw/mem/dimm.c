@@ -1,5 +1,5 @@
 /*
- * Dimm device for Memory Hotplug
+ * Dimm device abstraction
  *
  * Copyright ProfitBricks GmbH 2012
  * Copyright (C) 2014 Red Hat Inc
@@ -425,21 +425,13 @@ static void dimm_realize(DeviceState *dev, Error **errp)
     }
 }
 
-static MemoryRegion *dimm_get_memory_region(DIMMDevice *dimm)
-{
-    return host_memory_backend_get_memory(dimm->hostmem, &error_abort);
-}
-
 static void dimm_class_init(ObjectClass *oc, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
-    DIMMDeviceClass *ddc = DIMM_CLASS(oc);
 
     dc->realize = dimm_realize;
     dc->props = dimm_properties;
     dc->desc = "DIMM memory module";
-
-    ddc->get_memory_region = dimm_get_memory_region;
 }
 
 static TypeInfo dimm_info = {
@@ -449,6 +441,7 @@ static TypeInfo dimm_info = {
     .instance_init = dimm_init,
     .class_init    = dimm_class_init,
     .class_size    = sizeof(DIMMDeviceClass),
+    .abstract      = true,
 };
 
 static void dimm_register_types(void)
