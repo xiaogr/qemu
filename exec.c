@@ -1154,14 +1154,60 @@ void qemu_mutex_unlock_ramlist(void)
 }
 
 #ifdef __linux__
+static bool path_is_dir(const char *path)
+{
+    struct stat fs;
+
+    return stat(path, &fs) == 0 && S_ISDIR(fs.st_mode);
+}
+
+static int open_file_path(RAMBlock *block, const char *path, size_t size)
+{
+    char *filename;
+    char *sanitized_name;
+    char *c;
+    int fd;
+
+    if (!path_is_dir(path)) {
+        int flags = (block->flags & RAM_SHARED) ? O_RDWR : O_RDONLY;
+
+        flags |= O_EXCL;
+        return open(path, flags);
+    }
+
+    /* Make name safe to use with mkstemp by replacing '/' with '_'. */
+    sanitized_name = g_strdup(memory_region_name(block->mr));
+    for (c = sanitized_name; *c != '\0'; c++) {
+        if (*c == '/') {
+            *c = '_';
+        }
+    }
+    filename = g_strdup_printf("%s/qemu_back_mem.%s.XXXXXX", path,
+                               sanitized_name);
+    g_free(sanitized_name);
+    fd = mkstemp(filename);
+    if (fd >= 0) {
+        unlink(filename);
+        /*
+         * ftruncate is not supported by hugetlbfs in older
+         * hosts, so don't bother bailing out on errors.
+         * If anything goes wrong with it under other filesystems,
+         * mmap will fail.
+         */
+        if (ftruncate(fd, size)) {
+            perror("ftruncate");
+        }
+    }
+    g_free(filename);
+
+    return fd;
+}
+
 static void *file_ram_alloc(RAMBlock *block,
                             ram_addr_t memory,
                             const char *path,
                             Error **errp)
 {
-    char *filename;
-    char *sanitized_name;
-    char *c;
     void *ptr;
     void *area = NULL;
     int fd;
@@ -1189,38 +1235,14 @@ static void *file_ram_alloc(RAMBlock *block,
         goto error;
     }
 
-    /* Make name safe to use with mkstemp by replacing '/' with '_'. */
-    sanitized_name = g_strdup(memory_region_name(block->mr));
-    for (c = sanitized_name; *c != '\0'; c++) {
-        if (*c == '/')
-            *c = '_';
-    }
-
-    filename = g_strdup_printf("%s/qemu_back_mem.%s.XXXXXX", path,
-                               sanitized_name);
-    g_free(sanitized_name);
-
-    fd = mkstemp(filename);
-    if (fd < 0) {
-        error_setg_errno(errp, errno,
-                         "unable to create backing store for path %s", path);
-        g_free(filename);
-        goto error;
-    }
-    unlink(filename);
-    g_free(filename);
-
     memory = ROUND_UP(memory, pagesize);
     total = memory + pagesize;
 
-    /*
-     * ftruncate is not supported by hugetlbfs in older
-     * hosts, so don't bother bailing out on errors.
-     * If anything goes wrong with it under other filesystems,
-     * mmap will fail.
-     */
-    if (ftruncate(fd, memory)) {
-        perror("ftruncate");
+    fd = open_file_path(block, path, memory);
+    if (fd < 0) {
+        error_setg_errno(errp, errno,
+                         "unable to create backing store for path %s", path);
+        goto error;
     }
 
     ptr = mmap(0, total, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS,
