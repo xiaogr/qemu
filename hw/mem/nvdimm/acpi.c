@@ -39,6 +39,22 @@ static void nfit_spa_uuid_pm(uuid_le *uuid)
     memcpy(uuid, &uuid_pm, sizeof(uuid_pm));
 }
 
+static bool dsm_is_root_uuid(uint8_t *uuid)
+{
+    uuid_le uuid_root = UUID_LE(0x2f10e7a4, 0x9e91, 0x11e4, 0x89,
+                                0xd3, 0x12, 0x3b, 0x93, 0xf7, 0x5c, 0xba);
+
+    return !memcmp(uuid, &uuid_root, sizeof(uuid_root));
+}
+
+static bool dsm_is_dimm_uuid(uint8_t *uuid)
+{
+    uuid_le uuid_dimm = UUID_LE(0x4309ac30, 0x0d11, 0x11e4, 0x91,
+                                0x91, 0x08, 0x00, 0x20, 0x0c, 0x9a, 0x66);
+
+    return !memcmp(uuid, &uuid_dimm, sizeof(uuid_dimm));
+}
+
 enum {
     NFIT_STRUCTURE_SPA = 0,
     NFIT_STRUCTURE_MEMDEV = 1,
@@ -195,6 +211,22 @@ static uint32_t nvdimm_slot_to_dcr_index(int slot)
     return nvdimm_slot_to_spa_index(slot) + 1;
 }
 
+static NVDIMMDevice
+*get_nvdimm_device_by_handle(GSList *list, uint32_t handle)
+{
+    for (; list; list = list->next) {
+        NVDIMMDevice *nvdimm = list->data;
+        int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                           NULL);
+
+        if (nvdimm_slot_to_handle(slot) == handle) {
+            return nvdimm;
+        }
+    }
+
+    return NULL;
+}
+
 static int build_structure_spa(void *buf, NVDIMMDevice *nvdimm)
 {
     nfit_spa *nfit_spa;
@@ -310,6 +342,43 @@ static void build_nfit(void *fit, GSList *device_list, GArray *table_offsets,
 
 #define NOTIFY_VALUE      0x99
 
+enum {
+    DSM_CMD_IMPLEMENTED = 0,
+
+    /* root device commands */
+    DSM_CMD_ARS_CAP = 1,
+    DSM_CMD_ARS_START = 2,
+    DSM_CMD_ARS_QUERY = 3,
+
+    /* per-nvdimm device commands */
+    DSM_CMD_SMART = 1,
+    DSM_CMD_SMART_THRESHOLD = 2,
+    DSM_CMD_BLOCK_NVDIMM_FLAGS = 3,
+    DSM_CMD_NAMESPACE_LABEL_SIZE = 4,
+    DSM_CMD_GET_NAMESPACE_LABEL_DATA = 5,
+    DSM_CMD_SET_NAMESPACE_LABEL_DATA = 6,
+    DSM_CMD_VENDOR_EFFECT_LOG_SIZE = 7,
+    DSM_CMD_GET_VENDOR_EFFECT_LOG = 8,
+    DSM_CMD_VENDOR_SPECIFIC = 9,
+};
+
+enum {
+    DSM_STATUS_SUCCESS = 0,
+    DSM_STATUS_NOT_SUPPORTED = 1,
+    DSM_STATUS_NON_EXISTING_MEM_DEV = 2,
+    DSM_STATUS_INVALID_PARAS = 3,
+    DSM_STATUS_VENDOR_SPECIFIC_ERROR = 4,
+};
+
+#define DSM_REVISION        (1)
+
+/* do not support any command except NFIT_CMD_IMPLEMENTED on root. */
+#define ROOT_SUPPORT_CMD    (1 << DSM_CMD_IMPLEMENTED)
+#define DIMM_SUPPORT_CMD    ((1 << DSM_CMD_IMPLEMENTED)               \
+                           | (1 << DSM_CMD_NAMESPACE_LABEL_SIZE)      \
+                           | (1 << DSM_CMD_GET_NAMESPACE_LABEL_DATA)  \
+                           | (1 << DSM_CMD_SET_NAMESPACE_LABEL_DATA))
+
 struct dsm_in {
     uint32_t handle;
     uint8_t arg0[16];
@@ -320,10 +389,19 @@ struct dsm_in {
 } QEMU_PACKED;
 typedef struct dsm_in dsm_in;
 
+struct cmd_out_implemented {
+    uint64_t cmd_list;
+};
+typedef struct cmd_out_implemented cmd_out_implemented;
+
 struct dsm_out {
     /* the size of buffer filled by QEMU. */
     uint16_t len;
-    uint8_t data[0];
+    union {
+        uint8_t data[0];
+        uint32_t status;
+        cmd_out_implemented cmd_implemented;
+    };
 } QEMU_PACKED;
 typedef struct dsm_out dsm_out;
 
@@ -334,12 +412,110 @@ static uint64_t dsm_read(void *opaque, hwaddr addr,
     return 0;
 }
 
+static void dsm_write_root(uint32_t function, dsm_in *in, dsm_out *out)
+{
+    if (function == DSM_CMD_IMPLEMENTED) {
+        out->len = sizeof(out->cmd_implemented);
+        out->cmd_implemented.cmd_list = cpu_to_le64(ROOT_SUPPORT_CMD);
+        return;
+    }
+
+    out->len = sizeof(out->status);
+    out->status = cpu_to_le32(DSM_STATUS_NOT_SUPPORTED);
+    nvdebug("Return status %#x.\n", out->status);
+}
+
+static void dsm_write_nvdimm(uint32_t handle, uint32_t function, dsm_in *in,
+                             dsm_out *out)
+{
+    GSList *list = nvdimm_get_built_list();
+    NVDIMMDevice *nvdimm = get_nvdimm_device_by_handle(list, handle);
+    uint32_t status = DSM_STATUS_NON_EXISTING_MEM_DEV;
+    uint64_t cmd_list;
+
+    if (!nvdimm) {
+        out->len = sizeof(out->status);
+        goto set_status_free;
+    }
+
+    switch (function) {
+    case DSM_CMD_IMPLEMENTED:
+        cmd_list = DIMM_SUPPORT_CMD;
+        out->len = sizeof(out->cmd_implemented);
+        out->cmd_implemented.cmd_list = cpu_to_le64(cmd_list);
+        goto free;
+    default:
+        out->len = sizeof(out->status);
+        status = DSM_STATUS_NOT_SUPPORTED;
+    };
+
+    nvdebug("Return status %#x.\n", status);
+
+set_status_free:
+    out->status = cpu_to_le32(status);
+free:
+    g_slist_free(list);
+}
+
 static void dsm_write(void *opaque, hwaddr addr,
                       uint64_t val, unsigned size)
 {
+    NVDIMMState *state = opaque;
+    MemoryRegion *dsm_ram_mr;
+    dsm_in *in;
+    dsm_out *out;
+    uint32_t revision, function, handle;
+
     if (val != NOTIFY_VALUE) {
         fprintf(stderr, "BUG: unexepected notify value 0x%" PRIx64, val);
     }
+
+    dsm_ram_mr = memory_region_find(&state->mr, state->page_size,
+                                    state->page_size).mr;
+    memory_region_unref(dsm_ram_mr);
+    in = memory_region_get_ram_ptr(dsm_ram_mr);
+    out = (dsm_out *)in;
+
+    revision = in->arg1;
+    function = in->arg2;
+    handle = in->handle;
+    le32_to_cpus(&revision);
+    le32_to_cpus(&function);
+    le32_to_cpus(&handle);
+
+    nvdebug("UUID " UUID_FMT ".\n", in->arg0[0], in->arg0[1], in->arg0[2],
+            in->arg0[3], in->arg0[4], in->arg0[5], in->arg0[6],
+            in->arg0[7], in->arg0[8], in->arg0[9], in->arg0[10],
+            in->arg0[11], in->arg0[12], in->arg0[13], in->arg0[14],
+            in->arg0[15]);
+    nvdebug("Revision %#x Function %#x Handler %#x.\n", revision, function,
+            handle);
+
+    if (revision != DSM_REVISION) {
+        nvdebug("Revision %#x is not supported, expect %#x.\n",
+                revision, DSM_REVISION);
+        goto exit;
+    }
+
+    if (!handle) {
+        if (!dsm_is_root_uuid(in->arg0)) {
+            nvdebug("Root UUID does not match.\n");
+            goto exit;
+        }
+
+        return dsm_write_root(function, in, out);
+    }
+
+    if (!dsm_is_dimm_uuid(in->arg0)) {
+        nvdebug("DIMM UUID does not match.\n");
+        goto exit;
+    }
+
+    return dsm_write_nvdimm(handle, function, in, out);
+
+exit:
+    out->len = sizeof(out->status);
+    out->status = cpu_to_le32(DSM_STATUS_NOT_SUPPORTED);
 }
 
 static const MemoryRegionOps dsm_ops = {
