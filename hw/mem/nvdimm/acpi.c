@@ -305,6 +305,8 @@ static void build_device_structure(GSList *device_list, char *buf)
 {
     for (; device_list; device_list = device_list->next) {
         NVDIMMDevice *nvdimm = device_list->data;
+        nfit_memdev *memdev;
+        nfit_dcr *dcr;
 
         /* build System Physical Address Range Description Table. */
         buf += build_structure_spa(buf, nvdimm);
@@ -313,10 +315,15 @@ static void build_device_structure(GSList *device_list, char *buf)
          * build Memory Device to System Physical Address Range Mapping
          * Table.
          */
+        memdev = (nfit_memdev *)buf;
         buf += build_structure_memdev(buf, nvdimm);
 
         /* build Control Region Descriptor Table. */
+        dcr = (struct nfit_dcr *)buf;
         buf += build_structure_dcr(buf, nvdimm);
+
+        calculate_nvdimm_isetcookie(nvdimm, memdev->region_offset,
+                                    dcr->serial_number);
     }
 }
 
@@ -560,6 +567,12 @@ dsm_cmd_set_label_data(NVDIMMDevice *nvdimm, dsm_in *in, dsm_out *out)
         goto exit;
     }
 
+    if (!nvdimm->reserve_label_data) {
+        out->len = sizeof(out->status);
+        status = DSM_STATUS_NOT_SUPPORTED;
+        goto exit;
+    }
+
     status = DSM_STATUS_SUCCESS;
     memcpy(nvdimm->label_data + offset, cmd_in->in_buf, length);
     out->len = sizeof(status);
@@ -583,6 +596,10 @@ static void dsm_write_nvdimm(MemoryRegion *dsm_ram_mr, uint32_t handle,
     switch (function) {
     case DSM_CMD_IMPLEMENTED:
         cmd_list = DIMM_SUPPORT_CMD;
+        if (!nvdimm->reserve_label_data) {
+            cmd_list &= ~(1 << DSM_CMD_SET_NAMESPACE_LABEL_DATA);
+        }
+
         out->len = sizeof(out->cmd_implemented);
         out->cmd_implemented.cmd_list = cpu_to_le64(cmd_list);
         goto free;
@@ -936,6 +953,9 @@ void nvdimm_build_acpi_table(NVDIMMState *state, GArray *table_offsets,
 
         nvdimm_build_ssdt(state, device_list, table_offsets, table_data,
                           linker);
+
+        build_nvdimm_label_data(device_list);
+
         g_slist_free(device_list);
     }
 }

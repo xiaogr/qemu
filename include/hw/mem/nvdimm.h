@@ -28,8 +28,12 @@ struct NVDIMMDevice {
     DIMMDevice parent_obj;
 
     /* public */
+    bool reserve_label_data;
     uint64_t label_size;
     void *label_data;
+
+    uint64_t isetcookie;
+
     MemoryRegion nvdimm_mr;
 };
 typedef struct NVDIMMDevice NVDIMMDevice;

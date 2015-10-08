@@ -35,4 +35,7 @@ typedef struct uuid_le uuid_le;
     (d0), (d1), (d2), (d3), (d4), (d5), (d6), (d7) } })
 
 GSList *nvdimm_get_built_list(void);
+void calculate_nvdimm_isetcookie(NVDIMMDevice *nvdimm, uint64_t spa_offset,
+                                 uint32_t sn);
+void build_nvdimm_label_data(GSList *device_list);
 #endif
