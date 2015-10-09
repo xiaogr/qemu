@@ -426,6 +426,7 @@ static void dimm_init(Object *obj)
 static void dimm_realize(DeviceState *dev, Error **errp)
 {
     DIMMDevice *dimm = DIMM(dev);
+    DIMMDeviceClass *ddc = DIMM_GET_CLASS(dimm);
 
     if (!dimm->hostmem) {
         error_setg(errp, "'" DIMM_MEMDEV_PROP "' property is not set");
@@ -437,6 +438,10 @@ static void dimm_realize(DeviceState *dev, Error **errp)
                    PRIu32 "' which exceeds the number of numa nodes: %d",
                    dimm->node, nb_numa_nodes ? nb_numa_nodes : 1);
         return;
+    }
+
+    if (ddc->realize) {
+        ddc->realize(dimm, errp);
     }
 }
 
