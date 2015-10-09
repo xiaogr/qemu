@@ -1609,15 +1609,15 @@ void ioapic_init_gsi(GSIState *gsi_state, const char *parent_name)
     }
 }
 
-static void pc_dimm_plug(HotplugHandler *hotplug_dev,
+static void dimm_plug(HotplugHandler *hotplug_dev,
                          DeviceState *dev, Error **errp)
 {
     HotplugHandlerClass *hhc;
     Error *local_err = NULL;
     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
     PCMachineClass *pcmc = PC_MACHINE_GET_CLASS(pcms);
-    PCDIMMDevice *dimm = PC_DIMM(dev);
-    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
+    DIMMDevice *dimm = DIMM(dev);
+    DIMMDeviceClass *ddc = DIMM_GET_CLASS(dimm);
     MemoryRegion *mr = ddc->get_memory_region(dimm);
     uint64_t align = TARGET_PAGE_SIZE;
 
@@ -1631,7 +1631,7 @@ static void pc_dimm_plug(HotplugHandler *hotplug_dev,
         goto out;
     }
 
-    pc_dimm_memory_plug(dev, &pcms->hotplug_memory, mr, align,
+    dimm_memory_plug(dev, &pcms->hotplug_memory, mr, align,
                         pcmc->inter_dimm_gap, &local_err);
     if (local_err) {
         goto out;
@@ -1643,7 +1643,7 @@ out:
     error_propagate(errp, local_err);
 }
 
-static void pc_dimm_unplug_request(HotplugHandler *hotplug_dev,
+static void dimm_unplug_request(HotplugHandler *hotplug_dev,
                                    DeviceState *dev, Error **errp)
 {
     HotplugHandlerClass *hhc;
@@ -1663,12 +1663,12 @@ out:
     error_propagate(errp, local_err);
 }
 
-static void pc_dimm_unplug(HotplugHandler *hotplug_dev,
+static void dimm_unplug(HotplugHandler *hotplug_dev,
                            DeviceState *dev, Error **errp)
 {
     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
-    PCDIMMDevice *dimm = PC_DIMM(dev);
-    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
+    DIMMDevice *dimm = DIMM(dev);
+    DIMMDeviceClass *ddc = DIMM_GET_CLASS(dimm);
     MemoryRegion *mr = ddc->get_memory_region(dimm);
     HotplugHandlerClass *hhc;
     Error *local_err = NULL;
@@ -1680,7 +1680,7 @@ static void pc_dimm_unplug(HotplugHandler *hotplug_dev,
         goto out;
     }
 
-    pc_dimm_memory_unplug(dev, &pcms->hotplug_memory, mr);
+    dimm_memory_unplug(dev, &pcms->hotplug_memory, mr);
     object_unparent(OBJECT(dev));
 
  out:
@@ -1719,8 +1719,8 @@ out:
 static void pc_machine_device_plug_cb(HotplugHandler *hotplug_dev,
                                       DeviceState *dev, Error **errp)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
-        pc_dimm_plug(hotplug_dev, dev, errp);
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
+        dimm_plug(hotplug_dev, dev, errp);
     } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
         pc_cpu_plug(hotplug_dev, dev, errp);
     }
@@ -1729,8 +1729,8 @@ static void pc_machine_device_plug_cb(HotplugHandler *hotplug_dev,
 static void pc_machine_device_unplug_request_cb(HotplugHandler *hotplug_dev,
                                                 DeviceState *dev, Error **errp)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
-        pc_dimm_unplug_request(hotplug_dev, dev, errp);
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
+        dimm_unplug_request(hotplug_dev, dev, errp);
     } else {
         error_setg(errp, "acpi: device unplug request for not supported device"
                    " type: %s", object_get_typename(OBJECT(dev)));
@@ -1740,8 +1740,8 @@ static void pc_machine_device_unplug_request_cb(HotplugHandler *hotplug_dev,
 static void pc_machine_device_unplug_cb(HotplugHandler *hotplug_dev,
                                         DeviceState *dev, Error **errp)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
-        pc_dimm_unplug(hotplug_dev, dev, errp);
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
+        dimm_unplug(hotplug_dev, dev, errp);
     } else {
         error_setg(errp, "acpi: device unplug for not supported device"
                    " type: %s", object_get_typename(OBJECT(dev)));
@@ -1753,7 +1753,7 @@ static HotplugHandler *pc_get_hotpug_handler(MachineState *machine,
 {
     PCMachineClass *pcmc = PC_MACHINE_GET_CLASS(machine);
 
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM) ||
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM) ||
         object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
         return HOTPLUG_HANDLER(machine);
     }
