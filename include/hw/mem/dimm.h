@@ -65,6 +65,7 @@ typedef struct DIMMDeviceClass {
     DeviceClass parent_class;
 
     /* public */
+    void (*realize)(DIMMDevice *dimm, Error **errp);
     MemoryRegion *(*get_memory_region)(DIMMDevice *dimm);
 } DIMMDeviceClass;
 
