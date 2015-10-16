@@ -1164,6 +1164,20 @@ Aml *aml_create_field(Aml *srcbuf, Aml *index, Aml *len, const char *name)
     return var;
 }
 
+/* ACPI 1.0b: 16.2.5.4 Type 2 Opcodes Encoding: DefConcat */
+Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target)
+{
+    Aml *var = aml_opcode(0x73 /* ConcatOp */);
+    aml_append(var, source1);
+    aml_append(var, source2);
+
+    if (target) {
+        aml_append(var, target);
+    }
+
+    return var;
+}
+
 void
 build_header(GArray *linker, GArray *table_data,
              AcpiTableHeader *h, const char *sig, int len, uint8_t rev)

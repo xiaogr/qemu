@@ -277,6 +277,7 @@ Aml *aml_unicode(const char *str);
 Aml *aml_derefof(Aml *arg);
 Aml *aml_sizeof(Aml *arg);
 Aml *aml_create_field(Aml *srcbuf, Aml *index, Aml *len, const char *name);
+Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
 
 void
 build_header(GArray *linker, GArray *table_data,
