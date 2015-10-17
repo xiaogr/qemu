@@ -1658,6 +1658,13 @@ static bool acpi_has_iommu(void)
     return intel_iommu && !ambiguous;
 }
 
+static NVDIMMState *acpi_get_nvdimm_state(void)
+{
+    PCMachineState *pcms = PC_MACHINE(qdev_get_machine());
+
+    return &pcms->nvdimm_memory;
+}
+
 static
 void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
 {
@@ -1741,6 +1748,9 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
         acpi_add_table(table_offsets, tables_blob);
         build_dmar_q35(tables_blob, tables->linker);
     }
+
+    nvdimm_build_acpi(acpi_get_nvdimm_state(), table_offsets, tables_blob,
+                      tables->linker);
 
     /* Add tables supplied by user (if any) */
     for (u = acpi_table_first(); u; u = acpi_table_next(u)) {

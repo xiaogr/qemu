@@ -68,6 +68,15 @@ struct NVDIMMDevice {
 typedef struct NVDIMMDevice NVDIMMDevice;
 
 /*
+ * inquire plugged NVDIMM devices and link them into the list which is
+ * returned to the caller.
+ *
+ * Note: it is the caller's responsibility to free the list to avoid
+ * memory leak.
+ */
+GSList *nvdimm_get_plugged_device_list(void);
+
+/*
  * NVDIMMState:
  * @base: address in guest address space where NVDIMM ACPI memory begins.
  * @mr: NVDIMM ACPI memory address space container.
@@ -81,4 +90,8 @@ typedef struct NVDIMMState NVDIMMState;
 /* Initialize the memory region needed by NVDIMM ACPI.*/
 void nvdimm_init_memory_state(NVDIMMState *state, MemoryRegion *system_memory,
                               MachineState *machine);
+
+/* Build NVDIMM ACPI including NFIT, NVDIMM devices, etc. */
+void nvdimm_build_acpi(NVDIMMState *state, GArray *table_offsets,
+                       GArray *table_data, GArray *linker);
 #endif

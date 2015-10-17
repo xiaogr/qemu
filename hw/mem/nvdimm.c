@@ -25,6 +25,30 @@
 #include "qapi/visitor.h"
 #include "hw/mem/nvdimm.h"
 
+static int nvdimm_plugged_device_list(Object *obj, void *opaque)
+{
+    GSList **list = opaque;
+
+    if (object_dynamic_cast(obj, TYPE_NVDIMM)) {
+        NVDIMMDevice *nvdimm = NVDIMM(obj);
+
+        if (memory_region_is_mapped(&nvdimm->nvdimm_mr)) {
+            *list = g_slist_append(*list, DEVICE(obj));
+        }
+    }
+
+    object_child_foreach(obj, nvdimm_plugged_device_list, opaque);
+    return 0;
+}
+
+GSList *nvdimm_get_plugged_device_list(void)
+{
+    GSList *list = NULL;
+
+    object_child_foreach(qdev_get_machine(), nvdimm_plugged_device_list, &list);
+    return list;
+}
+
 static MemoryRegion *nvdimm_get_memory_region(DIMMDevice *dimm)
 {
     NVDIMMDevice *nvdimm = NVDIMM(dimm);
