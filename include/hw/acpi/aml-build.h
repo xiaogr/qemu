@@ -263,6 +263,7 @@ Aml *aml_qword_memory(AmlDecode dec, AmlMinFixed min_fixed,
 Aml *aml_scope(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
 Aml *aml_device(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
 Aml *aml_method(const char *name, int arg_count);
+Aml *aml_method_serialized(const char *name, int arg_count);
 Aml *aml_if(Aml *predicate);
 Aml *aml_else(void);
 Aml *aml_while(Aml *predicate);
