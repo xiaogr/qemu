@@ -1360,6 +1360,8 @@ FWCfgState *pc_memory_init(PCMachineState *pcms,
             exit(EXIT_FAILURE);
         }
 
+        nvdimm_init_memory_state(&pcms->nvdimm_memory, system_memory, machine);
+
         pcms->hotplug_memory.base =
             ROUND_UP(0x100000000ULL + pcms->above_4g_mem_size, 1ULL << 30);
 

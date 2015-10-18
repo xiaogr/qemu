@@ -17,6 +17,7 @@
 #include "hw/boards.h"
 #include "hw/compat.h"
 #include "hw/mem/dimm.h"
+#include "hw/mem/nvdimm.h"
 
 #define HPET_INTCAP "hpet-intcap"
 
@@ -32,6 +33,7 @@ struct PCMachineState {
 
     /* <public> */
     MemoryHotplugState hotplug_memory;
+    NVDIMMState nvdimm_memory;
 
     HotplugHandler *acpi_dev;
     ISADevice *rtc;
