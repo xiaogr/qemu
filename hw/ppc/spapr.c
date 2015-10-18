@@ -2083,8 +2083,8 @@ static void spapr_memory_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
 {
     Error *local_err = NULL;
     sPAPRMachineState *ms = SPAPR_MACHINE(hotplug_dev);
-    PCDIMMDevice *dimm = PC_DIMM(dev);
-    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
+    DIMMDevice *dimm = DIMM(dev);
+    DIMMDeviceClass *ddc = DIMM_GET_CLASS(dimm);
     MemoryRegion *mr = ddc->get_memory_region(dimm);
     uint64_t align = memory_region_get_alignment(mr);
     uint64_t size = memory_region_size(mr);
@@ -2096,14 +2096,14 @@ static void spapr_memory_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
         goto out;
     }
 
-    pc_dimm_memory_plug(dev, &ms->hotplug_memory, mr, align, false, &local_err);
+    dimm_memory_plug(dev, &ms->hotplug_memory, mr, align, false, &local_err);
     if (local_err) {
         goto out;
     }
 
-    addr = object_property_get_int(OBJECT(dimm), PC_DIMM_ADDR_PROP, &local_err);
+    addr = object_property_get_int(OBJECT(dimm), DIMM_ADDR_PROP, &local_err);
     if (local_err) {
-        pc_dimm_memory_unplug(dev, &ms->hotplug_memory, mr);
+        dimm_memory_unplug(dev, &ms->hotplug_memory, mr);
         goto out;
     }
 
@@ -2118,14 +2118,14 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
 {
     sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(qdev_get_machine());
 
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
         int node;
 
         if (!smc->dr_lmb_enabled) {
             error_setg(errp, "Memory hotplug not supported for this machine");
             return;
         }
-        node = object_property_get_int(OBJECT(dev), PC_DIMM_NODE_PROP, errp);
+        node = object_property_get_int(OBJECT(dev), DIMM_NODE_PROP, errp);
         if (*errp) {
             return;
         }
@@ -2159,7 +2159,7 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
 static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
                                       DeviceState *dev, Error **errp)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
         error_setg(errp, "Memory hot unplug not supported by sPAPR");
     }
 }
@@ -2167,7 +2167,7 @@ static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
 static HotplugHandler *spapr_get_hotpug_handler(MachineState *machine,
                                              DeviceState *dev)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+    if (object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
         return HOTPLUG_HANDLER(machine);
     }
     return NULL;
