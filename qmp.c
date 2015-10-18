@@ -710,7 +710,7 @@ MemoryDeviceInfoList *qmp_query_memory_devices(Error **errp)
     MemoryDeviceInfoList *head = NULL;
     MemoryDeviceInfoList **prev = &head;
 
-    qmp_pc_dimm_device_list(qdev_get_machine(), &prev);
+    qmp_dimm_device_list(qdev_get_machine(), &prev);
 
     return head;
 }

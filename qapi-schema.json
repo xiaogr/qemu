@@ -3715,9 +3715,9 @@
 { 'command': 'query-memdev', 'returns': ['Memdev'] }
 
 ##
-# @PCDIMMDeviceInfo:
+# @DIMMDeviceInfo:
 #
-# PCDIMMDevice state information
+# DIMMDevice state information
 #
 # @id: #optional device's ID
 #
@@ -3737,7 +3737,7 @@
 #
 # Since: 2.1
 ##
-{ 'struct': 'PCDIMMDeviceInfo',
+{ 'struct': 'DIMMDeviceInfo',
   'data': { '*id': 'str',
             'addr': 'int',
             'size': 'int',
@@ -3756,7 +3756,7 @@
 #
 # Since: 2.1
 ##
-{ 'union': 'MemoryDeviceInfo', 'data': {'dimm': 'PCDIMMDeviceInfo'} }
+{ 'union': 'MemoryDeviceInfo', 'data': {'dimm': 'DIMMDeviceInfo'} }
 
 ##
 # @query-memory-devices

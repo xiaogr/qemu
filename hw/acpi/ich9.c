@@ -440,7 +440,7 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
 void ich9_pm_device_plug_cb(ICH9LPCPMRegs *pm, DeviceState *dev, Error **errp)
 {
     if (pm->acpi_memory_hotplug.is_enabled &&
-        object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+        object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
         acpi_memory_plug_cb(&pm->acpi_regs, pm->irq, &pm->acpi_memory_hotplug,
                             dev, errp);
     } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
@@ -455,7 +455,7 @@ void ich9_pm_device_unplug_request_cb(ICH9LPCPMRegs *pm, DeviceState *dev,
                                       Error **errp)
 {
     if (pm->acpi_memory_hotplug.is_enabled &&
-        object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+        object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
         acpi_memory_unplug_request_cb(&pm->acpi_regs, pm->irq,
                                       &pm->acpi_memory_hotplug, dev, errp);
     } else {
@@ -468,7 +468,7 @@ void ich9_pm_device_unplug_cb(ICH9LPCPMRegs *pm, DeviceState *dev,
                               Error **errp)
 {
     if (pm->acpi_memory_hotplug.is_enabled &&
-        object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+        object_dynamic_cast(OBJECT(dev), TYPE_DIMM)) {
         acpi_memory_unplug_cb(&pm->acpi_memory_hotplug, dev, errp);
     } else {
         error_setg(errp, "acpi: device unplug for not supported device"
