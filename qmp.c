@@ -31,7 +31,7 @@
 #include "qapi/qmp-input-visitor.h"
 #include "hw/boards.h"
 #include "qom/object_interfaces.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 #include "hw/acpi/acpi_dev_interface.h"
 
 NameInfo *qmp_query_name(Error **errp)

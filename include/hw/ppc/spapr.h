@@ -5,7 +5,7 @@
 #include "hw/boards.h"
 #include "hw/ppc/xics.h"
 #include "hw/ppc/spapr_drc.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 
 struct VIOsPAPRBus;
 struct sPAPRPHBState;

@@ -2199,7 +2199,7 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
          *
          * - Memory gets hotplugged to a different node than what the user
          *   specified.
-         * - Since pc-dimm subsystem in QEMU still thinks that memory belongs
+         * - Since dimm subsystem in QEMU still thinks that memory belongs
          *   to memory-less node, a reboot will set things accordingly
          *   and the previously hotplugged memory now ends in the right node.
          *   This appears as if some memory moved from one node to another.

@@ -34,7 +34,7 @@
 #include "hw/boards.h"
 #include "sysemu/hostmem.h"
 #include "qmp-commands.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 #include "qemu/option.h"
 #include "qemu/config-file.h"
 
