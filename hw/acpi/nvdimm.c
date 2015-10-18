@@ -260,6 +260,22 @@ static uint32_t nvdimm_slot_to_dcr_index(int slot)
     return nvdimm_slot_to_spa_index(slot) + 1;
 }
 
+static NVDIMMDevice
+*nvdimm_get_device_by_handle(GSList *list, uint32_t handle)
+{
+    for (; list; list = list->next) {
+        NVDIMMDevice *nvdimm = list->data;
+        int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                           NULL);
+
+        if (nvdimm_slot_to_handle(slot) == handle) {
+            return nvdimm;
+        }
+    }
+
+    return NULL;
+}
+
 /*
  * Please refer to ACPI 6.0: 5.2.25.1 System Physical Address Range
  * Structure
@@ -411,6 +427,60 @@ static void nvdimm_build_nfit(GArray *structures, GArray *table_offsets,
 /* detailed _DSM design please refer to docs/specs/acpi_nvdimm.txt */
 #define NOTIFY_VALUE      0x99
 
+enum {
+    DSM_FUN_IMPLEMENTED = 0,
+
+    /* NVDIMM Root Device Functions */
+    DSM_ROOT_DEV_FUN_ARS_CAP = 1,
+    DSM_ROOT_DEV_FUN_ARS_START = 2,
+    DSM_ROOT_DEV_FUN_ARS_QUERY = 3,
+
+    /* NVDIMM Device (non-root) Functions */
+    DSM_DEV_FUN_SMART = 1,
+    DSM_DEV_FUN_SMART_THRESHOLD = 2,
+    DSM_DEV_FUN_BLOCK_NVDIMM_FLAGS = 3,
+    DSM_DEV_FUN_NAMESPACE_LABEL_SIZE = 4,
+    DSM_DEV_FUN_GET_NAMESPACE_LABEL_DATA = 5,
+    DSM_DEV_FUN_SET_NAMESPACE_LABEL_DATA = 6,
+    DSM_DEV_FUN_VENDOR_EFFECT_LOG_SIZE = 7,
+    DSM_DEV_FUN_GET_VENDOR_EFFECT_LOG = 8,
+    DSM_DEV_FUN_VENDOR_SPECIFIC = 9,
+};
+
+enum {
+    /* Common return status codes. */
+    DSM_STATUS_SUCCESS = 0,                   /* Success */
+    DSM_STATUS_NOT_SUPPORTED = 1,             /* Not Supported */
+
+    /* NVDIMM Root Device _DSM function return status codes*/
+    DSM_ROOT_DEV_STATUS_INVALID_PARAS = 2,    /* Invalid Input Parameters */
+    DSM_ROOT_DEV_STATUS_FUNCTION_SPECIFIC_ERROR = 3, /* Function-Specific
+                                                        Error */
+
+    /* NVDIMM Device (non-root) _DSM function return status codes*/
+    DSM_DEV_STATUS_NON_EXISTING_MEM_DEV = 2,  /* Non-Existing Memory Device */
+    DSM_DEV_STATUS_INVALID_PARAS = 3,         /* Invalid Input Parameters */
+    DSM_DEV_STATUS_VENDOR_SPECIFIC_ERROR = 4, /* Vendor Specific Error */
+};
+
+/* Current revision supported by DSM specification is 1. */
+#define DSM_REVISION        (1)
+
+/*
+ * please refer to ACPI 6.0: 9.14.1 _DSM (Device Specific Method): Return
+ * Value Information:
+ *   if set to zero, no functions are supported (other than function zero)
+ *   for the specified UUID and Revision ID. If set to one, at least one
+ *   additional function is supported.
+ */
+
+/* do not support any function on root. */
+#define ROOT_SUPPORT_FUN     (0ULL)
+#define DIMM_SUPPORT_FUN    ((1 << DSM_FUN_IMPLEMENTED)                   \
+                           | (1 << DSM_DEV_FUN_NAMESPACE_LABEL_SIZE)      \
+                           | (1 << DSM_DEV_FUN_GET_NAMESPACE_LABEL_DATA)  \
+                           | (1 << DSM_DEV_FUN_SET_NAMESPACE_LABEL_DATA))
+
 struct dsm_in {
     uint32_t handle;
     uint32_t revision;
@@ -419,6 +489,11 @@ struct dsm_in {
     uint8_t arg3[0];
 } QEMU_PACKED;
 typedef struct dsm_in dsm_in;
+
+struct cmd_out_implemented {
+    uint64_t cmd_list;
+};
+typedef struct cmd_out_implemented cmd_out_implemented;
 
 struct dsm_out {
     /* the size of buffer filled by QEMU. */
@@ -434,12 +509,115 @@ nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
     return 0;
 }
 
+static void nvdimm_dsm_write_status(GArray *out, uint32_t status)
+{
+    /* status locates in the first 4 bytes in the dsm memory. */
+    assert(!out->len);
+
+    status = cpu_to_le32(status);
+    g_array_append_vals(out, &status, sizeof(status));
+}
+
+static void nvdimm_dsm_write_root(dsm_in *in, GArray *out)
+{
+    uint32_t status = DSM_STATUS_NOT_SUPPORTED;
+
+    /* please refer to ACPI 6.0: 9.14.1 _DSM (Device Specific Method) */
+    if (in->function == DSM_FUN_IMPLEMENTED) {
+        uint64_t cmd_list = cpu_to_le64(ROOT_SUPPORT_FUN);
+
+        g_array_append_vals(out, &cmd_list, sizeof(cmd_list));
+        return;
+    }
+
+    nvdimm_debug("Return status %#x.\n", status);
+    nvdimm_dsm_write_status(out, status);
+}
+
+static void nvdimm_dsm_write_nvdimm(dsm_in *in, GArray *out)
+{
+    GSList *list = nvdimm_get_plugged_device_list();
+    NVDIMMDevice *nvdimm = nvdimm_get_device_by_handle(list, in->handle);
+    uint32_t status = DSM_DEV_STATUS_NON_EXISTING_MEM_DEV;
+    uint64_t cmd_list;
+
+    if (!nvdimm) {
+        goto set_status_free;
+    }
+
+    switch (in->function) {
+    /* please refer to ACPI 6.0: 9.14.1 _DSM (Device Specific Method) */
+    case DSM_FUN_IMPLEMENTED:
+        cmd_list = cpu_to_le64(DIMM_SUPPORT_FUN);
+        g_array_append_vals(out, &cmd_list, sizeof(cmd_list));
+        goto free;
+    default:
+        status = DSM_STATUS_NOT_SUPPORTED;
+    };
+
+set_status_free:
+    nvdimm_debug("Return status %#x.\n", status);
+    nvdimm_dsm_write_status(out, status);
+free:
+    g_slist_free(list);
+}
+
 static void
 nvdimm_dsm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
+    NVDIMMState *state = opaque;
+    MemoryRegion *dsm_ram_mr;
+    dsm_in *in;
+    GArray *out;
+    void *dsm_ram_addr;
+
     if (val != NOTIFY_VALUE) {
         fprintf(stderr, "BUG: unexepected notify value 0x%" PRIx64, val);
     }
+
+    dsm_ram_mr = memory_region_find(&state->mr, getpagesize(),
+                                    getpagesize()).mr;
+    dsm_ram_addr = memory_region_get_ram_ptr(dsm_ram_mr);
+
+    /*
+     * copy all input data to our local memory to avoid potential issue
+     * as the dsm memory is visible to guest.
+     */
+    in = g_malloc(memory_region_size(dsm_ram_mr));
+    memcpy(in, dsm_ram_addr, memory_region_size(dsm_ram_mr));
+
+    le32_to_cpus(&in->revision);
+    le32_to_cpus(&in->function);
+    le32_to_cpus(&in->handle);
+
+    nvdimm_debug("Revision %#x Handler %#x Function %#x.\n", in->revision,
+                 in->handle, in->function);
+
+    out = g_array_new(false, true /* clear */, 1);
+
+    if (in->revision != DSM_REVISION) {
+        nvdimm_debug("Revision %#x is not supported, expect %#x.\n",
+                      in->revision, DSM_REVISION);
+        nvdimm_dsm_write_status(out, DSM_STATUS_NOT_SUPPORTED);
+        goto exit;
+    }
+
+    /* Handle 0 is reserved for NVDIMM Root Device. */
+    if (!in->handle) {
+        nvdimm_dsm_write_root(in, out);
+        goto exit;
+    }
+
+    nvdimm_dsm_write_nvdimm(in, out);
+
+exit:
+    /* Write our output result to dsm memory. */
+    ((dsm_out *)dsm_ram_addr)->len = out->len;
+    memcpy(((dsm_out *)dsm_ram_addr)->data, out->data, out->len);
+
+    g_free(in);
+    g_array_free(out, true);
+    memory_region_unref(dsm_ram_mr);
 }
 
 static const MemoryRegionOps nvdimm_dsm_ops = {
@@ -547,7 +725,8 @@ static void build_nvdimm_devices(NVDIMMState *state, GSList *device_list,
          */
         BUILD_DSM_METHOD(dev, method,
                          handle /* NVDIMM Device Handle */,
-                         3 /* Invalid Input Parameters */,
+                         DSM_DEV_STATUS_INVALID_PARAS, /* error code if UUID
+                                                         is not matched. */
                          "4309AC30-0D11-11E4-9191-0800200C9A66"
                          /* UUID for NVDIMM Devices. */);
 
@@ -669,7 +848,8 @@ static void nvdimm_build_acpi_devices(NVDIMMState *state, GSList *device_list,
      */
     BUILD_DSM_METHOD(dev, method,
                      0 /* 0 is reserved for NVDIMM Root Device*/,
-                     2 /* Invalid Input Parameters */,
+                     DSM_ROOT_DEV_STATUS_INVALID_PARAS, /* error code if
+                                                     UUID is not matched. */
                      "2F10E7A4-9E91-11E4-89D3-123B93F75CBA"
                      /* UUID for NVDIMM Root Devices. */);
 
