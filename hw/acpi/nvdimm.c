@@ -501,6 +501,7 @@ struct dsm_in {
    /* the remaining size in the page is used by arg3. */
     union {
         uint8_t arg3[0];
+        cmd_in_get_label_data cmd_get_label_data;
         cmd_in_set_label_data cmd_set_label_data;
     };
 } QEMU_PACKED;
@@ -624,6 +625,47 @@ static void nvdimm_dsm_func_label_size(NVDIMMDevice *nvdimm, GArray *out)
     g_array_append_vals(out, &cmd_label_size, sizeof(cmd_label_size));
 }
 
+/*
+ * please refer to DSM specification 4.5 Get Namespace Label Data (Function
+ * Index 5).
+ */
+static void
+nvdimm_dsm_cmd_get_label_data(NVDIMMDevice *nvdimm, dsm_in *in, GArray *out)
+{
+    cmd_in_get_label_data *cmd_in = &in->cmd_get_label_data;
+    uint32_t status = DSM_STATUS_SUCCESS;
+
+    le32_to_cpus(&cmd_in->offset);
+    le32_to_cpus(&cmd_in->length);
+
+    nvdimm_debug("Read Label Data: offset %#x length %#x.\n",
+                 cmd_in->offset, cmd_in->length);
+
+    if (nvdimm->label_size < cmd_in->offset + cmd_in->length) {
+        nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
+                     cmd_in->offset + cmd_in->length, nvdimm->label_size);
+        status = DSM_DEV_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    if (cmd_in->length > nvdimm_get_max_xfer_label_size()) {
+        nvdimm_debug("get length (%#x) is larger than max_xfer (%#x).\n",
+                     cmd_in->length, nvdimm_get_max_xfer_label_size());
+        status = DSM_DEV_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    /* write cmd_out_get_label_data.status. */
+    nvdimm_dsm_write_status(out, status);
+    /* write cmd_out_get_label_data.out_buf. */
+    g_array_append_vals(out, nvdimm->label_data + cmd_in->offset,
+                        cmd_in->length);
+    return;
+
+exit:
+    nvdimm_dsm_write_status(out, status);
+}
+
 static void nvdimm_dsm_write_nvdimm(dsm_in *in, GArray *out)
 {
     GSList *list = nvdimm_get_plugged_device_list();
@@ -643,6 +685,9 @@ static void nvdimm_dsm_write_nvdimm(dsm_in *in, GArray *out)
         goto free;
     case DSM_DEV_FUN_NAMESPACE_LABEL_SIZE:
         nvdimm_dsm_func_label_size(nvdimm, out);
+        goto free;
+    case DSM_DEV_FUN_GET_NAMESPACE_LABEL_DATA:
+        nvdimm_dsm_cmd_get_label_data(nvdimm, in, out);
         goto free;
     default:
         status = DSM_STATUS_NOT_SUPPORTED;
