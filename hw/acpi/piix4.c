@@ -33,7 +33,7 @@
 #include "hw/acpi/pcihp.h"
 #include "hw/acpi/cpu_hotplug.h"
 #include "hw/hotplug.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 #include "hw/acpi/memory_hotplug.h"
 #include "hw/acpi/acpi_dev_interface.h"
 #include "hw/xen/xen.h"

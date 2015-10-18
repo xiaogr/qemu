@@ -62,7 +62,7 @@
 #include "hw/boards.h"
 #include "hw/pci/pci_host.h"
 #include "acpi-build.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 #include "qapi/visitor.h"
 #include "qapi-visit.h"
 
