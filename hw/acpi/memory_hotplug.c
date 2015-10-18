@@ -1,6 +1,6 @@
 #include "hw/acpi/memory_hotplug.h"
 #include "hw/acpi/pc-hotplug.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 #include "hw/boards.h"
 #include "hw/qdev-core.h"
 #include "trace.h"
@@ -148,7 +148,7 @@ static void acpi_memory_hotplug_write(void *opaque, hwaddr addr, uint64_t data,
 
             dev = DEVICE(mdev->dimm);
             hotplug_ctrl = qdev_get_hotplug_handler(dev);
-            /* call pc-dimm unplug cb */
+            /* call dimm unplug cb */
             hotplug_handler_unplug(hotplug_ctrl, dev, &local_err);
             if (local_err) {
                 trace_mhp_acpi_dimm_delete_failed(mem_st->selector);
