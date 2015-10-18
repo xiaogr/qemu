@@ -624,9 +624,28 @@ static void nvdimm_build_acpi_devices(NVDIMMState *state, GSList *device_list,
 
     method = aml_method_serialized("NCAL", 4);
     {
+        Aml *ifctx;
+
         aml_append(method, aml_store(aml_arg(0), aml_name("HDLE")));
         aml_append(method, aml_store(aml_arg(1), aml_name("REVS")));
         aml_append(method, aml_store(aml_arg(2), aml_name("FUNC")));
+
+        /* Arg3 is passed as Package and it has one element? */
+        ifctx = aml_if(aml_and(aml_equal(aml_object_type(aml_arg(3)),
+                                         aml_int(4)),
+                               aml_equal(aml_sizeof(aml_arg(3)),
+                                         aml_int(1))));
+        {
+            /* Local0 = Index(Arg3, 0) */
+            aml_append(ifctx, aml_store(aml_index(aml_arg(3), aml_int(0)),
+                                        aml_local(0)));
+            /* Local3 = DeRefOf(Local0) */
+            aml_append(ifctx, aml_store(aml_derefof(aml_local(0)),
+                                        aml_local(3)));
+            /* ARG3 = Local3 */
+            aml_append(ifctx, aml_store(aml_local(3), aml_name("ARG3")));
+        }
+        aml_append(method, ifctx);
 
         aml_append(method, aml_store(aml_int(NOTIFY_VALUE), aml_name("NOTI")));
 
