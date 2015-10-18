@@ -55,6 +55,12 @@ struct NVDIMMDevice {
     /* public */
 
     /*
+     * if we need to reserve memory region for NVDIMM label data at
+     * the end of backend memory?
+     */
+    bool reserve_label_data;
+
+    /*
      * the size of label data in NVDIMM device which is presented to
      * guest via __DSM "Get Namespace Label Size" command.
      */

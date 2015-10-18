@@ -60,14 +60,15 @@ static void nvdimm_realize(DIMMDevice *dimm, Error **errp)
 {
     MemoryRegion *mr;
     NVDIMMDevice *nvdimm = NVDIMM(dimm);
-    uint64_t size;
+    uint64_t reserved_label_size, size;
 
     nvdimm->label_size = MIN_NAMESPACE_LABEL_SIZE;
+    reserved_label_size = nvdimm->reserve_label_data ? nvdimm->label_size : 0;
 
     mr = host_memory_backend_get_memory(dimm->hostmem, errp);
     size = memory_region_size(mr);
 
-    if (size <= nvdimm->label_size) {
+    if (size <= reserved_label_size) {
         char *path = object_get_canonical_path_component(OBJECT(dimm->hostmem));
         error_setg(errp, "the size of memdev %s (0x%" PRIx64 ") is too small"
                    " to contain nvdimm namespace label (0x%" PRIx64 ")", path,
@@ -76,9 +77,12 @@ static void nvdimm_realize(DIMMDevice *dimm, Error **errp)
     }
 
     memory_region_init_alias(&nvdimm->nvdimm_mr, OBJECT(dimm), "nvdimm-memory",
-                             mr, 0, size - nvdimm->label_size);
-    nvdimm->label_data = memory_region_get_ram_ptr(mr) +
-                         memory_region_size(&nvdimm->nvdimm_mr);
+                             mr, 0, size - reserved_label_size);
+
+    if (reserved_label_size) {
+        nvdimm->label_data = memory_region_get_ram_ptr(mr) +
+                             memory_region_size(&nvdimm->nvdimm_mr);
+    }
 }
 
 static void nvdimm_class_init(ObjectClass *oc, void *data)
@@ -93,10 +97,33 @@ static void nvdimm_class_init(ObjectClass *oc, void *data)
     ddc->get_memory_region = nvdimm_get_memory_region;
 }
 
+static bool nvdimm_get_reserve_label_data(Object *obj, Error **errp)
+{
+    NVDIMMDevice *nvdimm = NVDIMM(obj);
+
+    return nvdimm->reserve_label_data;
+}
+
+static void
+nvdimm_set_reserve_label_data(Object *obj, bool value, Error **errp)
+{
+    NVDIMMDevice *nvdimm = NVDIMM(obj);
+
+    nvdimm->reserve_label_data = value;
+}
+
+static void nvdimm_init(Object *obj)
+{
+    object_property_add_bool(obj, "reserve-label-data",
+                             nvdimm_get_reserve_label_data,
+                             nvdimm_set_reserve_label_data, NULL);
+}
+
 static TypeInfo nvdimm_info = {
     .name          = TYPE_NVDIMM,
     .parent        = TYPE_DIMM,
     .instance_size = sizeof(NVDIMMDevice),
+    .instance_init = nvdimm_init,
     .class_init    = nvdimm_class_init,
 };
 

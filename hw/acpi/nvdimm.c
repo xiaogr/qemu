@@ -647,6 +647,13 @@ nvdimm_dsm_cmd_get_label_data(NVDIMMDevice *nvdimm, dsm_in *in, GArray *out)
     nvdimm_debug("Read Label Data: offset %#x length %#x.\n",
                  cmd_in->offset, cmd_in->length);
 
+    if (!nvdimm->reserve_label_data) {
+        nvdimm_debug("read label request on the device without "
+                     "label data reserved.\n");
+        status = DSM_STATUS_NOT_SUPPORTED;
+        goto exit;
+    }
+
     if (nvdimm->label_size < cmd_in->offset + cmd_in->length) {
         nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
                      cmd_in->offset + cmd_in->length, nvdimm->label_size);
@@ -687,6 +694,14 @@ nvdimm_dsm_cmd_set_label_data(NVDIMMDevice *nvdimm, dsm_in *in, GArray *out)
 
     nvdimm_debug("Write Label Data: offset %#x length %#x.\n",
                  cmd_in->offset, cmd_in->length);
+
+    if (!nvdimm->reserve_label_data) {
+        nvdimm_debug("write label request on the device without "
+                     "label data reserved.\n");
+        status = DSM_STATUS_NOT_SUPPORTED;
+        goto exit;
+    }
+
     if (nvdimm->label_size < cmd_in->offset + cmd_in->length) {
         nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
                      cmd_in->offset + cmd_in->length, nvdimm->label_size);
@@ -724,6 +739,12 @@ static void nvdimm_dsm_write_nvdimm(dsm_in *in, GArray *out)
     /* please refer to ACPI 6.0: 9.14.1 _DSM (Device Specific Method) */
     case DSM_FUN_IMPLEMENTED:
         cmd_list = cpu_to_le64(DIMM_SUPPORT_FUN);
+
+        /* no function support if the device does not have label data. */
+        if (!nvdimm->reserve_label_data) {
+            cmd_list = cpu_to_le64(0UL);
+        }
+
         g_array_append_vals(out, &cmd_list, sizeof(cmd_list));
         goto free;
     case DSM_DEV_FUN_NAMESPACE_LABEL_SIZE:
