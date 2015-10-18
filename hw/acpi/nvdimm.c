@@ -529,6 +529,11 @@ struct cmd_out_get_label_data {
 } QEMU_PACKED;
 typedef struct cmd_out_get_label_data cmd_out_get_label_data;
 
+struct cmd_out_set_label_data {
+    uint32_t status;
+};
+typedef struct cmd_out_set_label_data cmd_out_set_label_data;
+
 struct dsm_out {
     /* the size of buffer filled by QEMU. */
     uint32_t len;
@@ -537,6 +542,7 @@ struct dsm_out {
         cmd_out_implemented cmd_implemented;
         cmd_out_label_size cmd_label_size;
         cmd_out_get_label_data cmd_get_label_data;
+        cmd_out_set_label_data cmd_set_label_data;
     };
 } QEMU_PACKED;
 typedef struct dsm_out dsm_out;
@@ -666,6 +672,43 @@ exit:
     nvdimm_dsm_write_status(out, status);
 }
 
+/*
+ * please refer to DSM specification 4.6 Set Namespace Label Data
+ * (Function Index 6).
+ */
+static void
+nvdimm_dsm_cmd_set_label_data(NVDIMMDevice *nvdimm, dsm_in *in, GArray *out)
+{
+    cmd_in_set_label_data *cmd_in = &in->cmd_set_label_data;
+    uint32_t status;
+
+    le32_to_cpus(&cmd_in->offset);
+    le32_to_cpus(&cmd_in->length);
+
+    nvdimm_debug("Write Label Data: offset %#x length %#x.\n",
+                 cmd_in->offset, cmd_in->length);
+    if (nvdimm->label_size < cmd_in->offset + cmd_in->length) {
+        nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
+                     cmd_in->offset + cmd_in->length, nvdimm->label_size);
+        status = DSM_DEV_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    if (cmd_in->length > nvdimm_get_max_xfer_label_size()) {
+        nvdimm_debug("set length (%#x) is larger than max_xfer (%#x).\n",
+                     cmd_in->length, nvdimm_get_max_xfer_label_size());
+        status = DSM_DEV_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    status = DSM_STATUS_SUCCESS;
+    memcpy(nvdimm->label_data + cmd_in->offset, cmd_in->in_buf,
+           cmd_in->length);
+
+exit:
+    nvdimm_dsm_write_status(out, status);
+}
+
 static void nvdimm_dsm_write_nvdimm(dsm_in *in, GArray *out)
 {
     GSList *list = nvdimm_get_plugged_device_list();
@@ -688,6 +731,9 @@ static void nvdimm_dsm_write_nvdimm(dsm_in *in, GArray *out)
         goto free;
     case DSM_DEV_FUN_GET_NAMESPACE_LABEL_DATA:
         nvdimm_dsm_cmd_get_label_data(nvdimm, in, out);
+        goto free;
+    case DSM_DEV_FUN_SET_NAMESPACE_LABEL_DATA:
+        nvdimm_dsm_cmd_set_label_data(nvdimm, in, out);
         goto free;
     default:
         status = DSM_STATUS_NOT_SUPPORTED;
