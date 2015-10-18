@@ -1,5 +1,5 @@
 #include "qom/object.h"
-#include "hw/mem/pc-dimm.h"
+#include "hw/mem/dimm.h"
 
 int qmp_dimm_device_list(Object *obj, void *opaque)
 {
