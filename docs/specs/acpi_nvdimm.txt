@@ -1,0 +1,154 @@
+QEMU<->ACPI BIOS NVDIMM interface
+---------------------------------
+
+QEMU supports NVDIMM via ACPI. This document describes the basic concepts of
+NVDIMM ACPI and the interface between QEMU and the ACPI BIOS.
+
+NVDIMM ACPI Background
+----------------------
+NVDIMM is introduced in ACPI 6.0 which defines an NVDIMM root device under
+_SB scope with a _HID of “ACPI0012”. For each NVDIMM present or intended
+to be supported by platform, platform firmware also exposes an ACPI
+Namespace Device under the root device.
+
+The NVDIMM child devices under the NVDIMM root device are defined with _ADR
+corresponding to the NFIT device handle. The NVDIMM root device and the
+NVDIMM devices can have device specific methods (_DSM) to provide additional
+functions specific to a particular NVDIMM implementation.
+
+This is an example from ACPI 6.0, a platform contains one NVDIMM:
+
+Scope (\_SB){
+   Device (NVDR) // Root device
+   {
+      Name (_HID, “ACPI0012”)
+      Method (_STA) {...}
+      Method (_FIT) {...}
+      Method (_DSM, ...) {...}
+      Device (NVD)
+      {
+         Name(_ADR, h) //where h is NFIT Device Handle for this NVDIMM
+         Method (_DSM, ...) {...}
+      }
+   }
+}
+
+Methods supported on both NVDIMM root device and NVDIMM device are
+1) _STA(Status)
+   It returns the current status of a device, which can be one of the
+   following: enabled, disabled, or removed.
+
+   Arguments: None
+
+   Return Value:
+   It returns an An Integer which is defined as followings:
+   Bit [0] – Set if the device is present.
+   Bit [1] – Set if the device is enabled and decoding its resources.
+   Bit [2] – Set if the device should be shown in the UI.
+   Bit [3] – Set if the device is functioning properly (cleared if device
+             failed its diagnostics).
+   Bit [4] – Set if the battery is present.
+   Bits [31:5] – Reserved (must be cleared).
+
+2) _DSM (Device Specific Method)
+   It is a control method that enables devices to provide device specific
+   control functions that are consumed by the device driver.
+   The NVDIMM DSM specification can be found at:
+        http://pmem.io/documents/NVDIMM_DSM_Interface_Example.pdf
+
+   Arguments:
+   Arg0 – A Buffer containing a UUID (16 Bytes)
+   Arg1 – An Integer containing the Revision ID (4 Bytes)
+   Arg2 – An Integer containing the Function Index (4 Bytes)
+   Arg3 – A package containing parameters for the function specified by the
+          UUID, Revision ID, and Function Index
+
+   Return Value:
+   If Function Index = 0, a Buffer containing a function index bitfield.
+   Otherwise, the return value and type depends on the UUID, revision ID
+   and function index which are described in the DSM specification.
+
+Methods on NVDIMM ROOT Device
+_FIT(Firmware Interface Table)
+   It evaluates to a buffer returning data in the format of a series of NFIT
+   Type Structure.
+
+   Arguments: None
+
+   Return Value:
+   A Buffer containing a list of NFIT Type structure entries.
+
+   The detailed definition of the structure can be found at ACPI 6.0: 5.2.25
+   NVDIMM Firmware Interface Table (NFIT).
+
+QEMU NVDIMM Implemention
+========================
+QEMU reserves the memory region, 0xFF00000 ~ 0xFFF00000, for NVDIMM ACPI.
+
+0xFF00000 - 0xFF00FFF:
+   The first page of the region is MMIO-based that means any access in this
+   region will be emulated by QEMU. ACPU uses it to transfer control from
+   guest to QEMU.
+
+   Write Access:
+       [0xFF00000 - 0xFF00003]: 4 bytes, ACPI write 0x99 to it to transfer
+                                control to QEMU.
+
+0xFF01000 - 0xFF01FFF:
+   This second page of the region is RAM-based and it is used to transfer
+   data between _DSM method and QEMU. If ACPI has control, this pages is
+   owned by ACPI which writes _DSM input data to it, otherwise, it is owned
+   by QEMU which emulates _DSM access and writes the output data to it.
+
+   ACPI Writes _DSM Input Data:
+   [0xFF01000 - 0xFF01003]: 4 bytes, NVDIMM Devcie Handle, 0 is reserved
+                            for NVDIMM Root device.
+   [0xFF01004 - 0xFF01007]: 4 bytes, Revision ID, that is the Arg1 of _DSM
+                            method.
+   [0xFF01008 - 0xFF0100B]: 4 bytes. Function Index, that is the Arg2 of
+                            _DSM method.
+   [0xFF0100C - 0xFF01FFF]: 4084 bytes, the Arg3 of _DSM method
+
+   QEMU Writes Output Data
+   [0xFF01000 - 0xFF01003]: 4 bytes, @buffer-size, see below.
+   [0xFF01004 - @buffer-size]: the size is depends on the value read from
+                               0xFF01000 - 0xFF01003. It is the buffer
+                               returned by _DSM
+
+0xFF02000 - 0xFFF00000:
+   It is RAM-based mapping. QEMU inquires all the NVDIMM device plugged into
+   the platform and saves their structures to this region while system is
+   booting or NVDIMM device is being hot added or removed (not enabled yet).
+
+   _FIT method gets system structure information from this region and returns
+   it to Guest.
+
+_DSM process diagram:
+---------------------
+The second page in the reserved region, 0xFF01000 - 0xFF01FFF, is used by
+_DSM Virtualization.
+
+ +----------------------+      +-----------------------+
+ |    1. OSPM           |      |    2. OSPM            |
+ | save _DSM input data |      | write 0x99 to         | Exit to QEMU
+ | to the page          +----->| 0xFF00000 - 0xFF00003 +------------+
+ |                      |      |                       |            |
+ +----------------------+      +-----------------------+            |
+                                                                    |
+                                                                    v
+ +-------------   ----+       +-----------+      +------------------+--------+
+ |      5 QEMU        |       | 4 QEMU    |      |        3. QEMU            |
+ | write buffer size  |       |  emulate  |      | get _DSM input parameters |
+ | and buffer to      +<------+ _DSM      +<-----+ from the page             |
+ | the page           |       |           |      |                           |
+ +--------+-----------+       +-----------+      +---------------------------+
+          |
+          | Enter Guest
+          |
+          v
+ +--------------------------+      +--------------+
+ |     6 OSPM               |      |   7 OSPM     |
+ | get buffer size          |      |  _DSM return |
+ | and buffer from the page +----->+              |
+ |                          |      |              |
+ +--------------------------+      +--------------+
