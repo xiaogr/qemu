@@ -524,11 +524,36 @@ static void nvdimm_build_acpi_devices(GSList *device_list, Aml *sb_scope)
 
     method = aml_method_serialized("NCAL", 4);
     {
-        Aml *buffer_size = aml_local(0);
+        Aml *ifctx, *pckg, *buffer_size = aml_local(0);
 
         aml_append(method, aml_store(aml_arg(0), aml_name("HDLE")));
         aml_append(method, aml_store(aml_arg(1), aml_name("REVS")));
         aml_append(method, aml_store(aml_arg(2), aml_name("FUNC")));
+
+        /*
+         * The fourth parameter (Arg3) of _DSM is a package which contains
+         * a buffer, the layout of the buffer is specified by UUID (Arg0),
+         * Revision ID (Arg1) and Function Index (Arg2) which are documented
+         * in the DSM Spec.
+         */
+        pckg = aml_arg(3);
+        ifctx = aml_if(aml_and(aml_equal(aml_object_type(pckg),
+                                         aml_int(4 /* Package */)),
+                               aml_equal(aml_sizeof(pckg),
+                                         aml_int(1))));
+        {
+            Aml *pckg_index, *pckg_buf;
+
+            pckg_index = aml_local(2);
+            pckg_buf = aml_local(3);
+
+            aml_append(ifctx, aml_store(aml_index(pckg, aml_int(0)),
+                                        pckg_index));
+            aml_append(ifctx, aml_store(aml_derefof(pckg_index),
+                                        pckg_buf));
+            aml_append(ifctx, aml_store(pckg_buf, aml_name("ARG3")));
+        }
+        aml_append(method, ifctx);
 
         /*
          * transfer control to QEMU and the buffer size filled by
