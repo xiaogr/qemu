@@ -407,14 +407,47 @@ enum {
     NVDIMM_DSM_DEV_STATUS_VENDOR_SPECIFIC_ERROR = 4,
 };
 
+struct nvdimm_func_in_get_label_data {
+    uint32_t offset; /* the offset in the namespace label data area. */
+    uint32_t length; /* the size of data is to be read via the function. */
+} QEMU_PACKED;
+typedef struct nvdimm_func_in_get_label_data nvdimm_func_in_get_label_data;
+
+struct nvdimm_func_in_set_label_data {
+    uint32_t offset; /* the offset in the namespace label data area. */
+    uint32_t length; /* the size of data is to be written via the function. */
+    uint8_t in_buf[0]; /* the data written to label data area. */
+} QEMU_PACKED;
+typedef struct nvdimm_func_in_set_label_data nvdimm_func_in_set_label_data;
+
 struct nvdimm_dsm_in {
     uint32_t handle;
     uint32_t revision;
     uint32_t function;
    /* the remaining size in the page is used by arg3. */
-    uint8_t arg3[0];
+    union {
+        uint8_t arg3[0];
+        nvdimm_func_in_set_label_data func_set_label_data;
+    };
 } QEMU_PACKED;
 typedef struct nvdimm_dsm_in nvdimm_dsm_in;
+
+struct nvdimm_func_out_label_size {
+    uint32_t status;     /* return status code. */
+    uint32_t label_size; /* the size of label data area. */
+    /*
+     * Maximum size of the namespace label data length supported by
+     * the platform in Get/Set Namespace Label Data functions.
+     */
+    uint32_t max_xfer;
+} QEMU_PACKED;
+typedef struct nvdimm_func_out_label_size nvdimm_func_out_label_size;
+
+struct nvdimm_func_out_get_label_data {
+    uint32_t status;    /*return status code. */
+    uint8_t out_buf[0]; /* the data got via Get Namesapce Label function. */
+} QEMU_PACKED;
+typedef struct nvdimm_func_out_get_label_data nvdimm_func_out_get_label_data;
 
 static void nvdimm_dsm_write_status(GArray *out, uint32_t status)
 {
@@ -445,6 +478,55 @@ static void nvdimm_dsm_root(nvdimm_dsm_in *in, GArray *out)
     nvdimm_dsm_write_status(out, status);
 }
 
+/*
+ * the max transfer size is the max size transferred by both a
+ * 'Get Namespace Label Data' function and a 'Set Namespace Label Data'
+ * function.
+ */
+static uint32_t nvdimm_get_max_xfer_label_size(void)
+{
+    nvdimm_dsm_in *in;
+    uint32_t max_get_size, max_set_size, dsm_memory_size = getpagesize();
+
+    /*
+     * the max data ACPI can read one time which is transferred by
+     * the response of 'Get Namespace Label Data' function.
+     */
+    max_get_size = dsm_memory_size - sizeof(nvdimm_func_out_get_label_data);
+
+    /*
+     * the max data ACPI can write one time which is transferred by
+     * 'Set Namespace Label Data' function.
+     */
+    max_set_size = dsm_memory_size - offsetof(nvdimm_dsm_in, arg3) -
+                   sizeof(in->func_set_label_data);
+
+    return MIN(max_get_size, max_set_size);
+}
+
+/*
+ * DSM Spec Rev1 4.4 Get Namespace Label Size (Function Index 4).
+ *
+ * It gets the size of Namespace Label data area and the max data size
+ * that Get/Set Namespace Label Data functions can transfer.
+ */
+static void nvdimm_dsm_func_label_size(NVDIMMDevice *nvdimm, GArray *out)
+{
+    nvdimm_func_out_label_size func_label_size;
+    uint32_t label_size, mxfer;
+
+    label_size = nvdimm->label_size;
+    mxfer = nvdimm_get_max_xfer_label_size();
+
+    nvdimm_debug("label_size %#x, max_xfer %#x.\n", label_size, mxfer);
+
+    func_label_size.status = cpu_to_le32(NVDIMM_DSM_STATUS_SUCCESS);
+    func_label_size.label_size = cpu_to_le32(label_size);
+    func_label_size.max_xfer = cpu_to_le32(mxfer);
+
+    g_array_append_vals(out, &func_label_size, sizeof(func_label_size));
+}
+
 static void nvdimm_dsm_device(nvdimm_dsm_in *in, GArray *out)
 {
     GSList *list = nvdimm_get_plugged_device_list();
@@ -468,6 +550,9 @@ static void nvdimm_dsm_device(nvdimm_dsm_in *in, GArray *out)
                                1 << 5 /* Get Namespace Label Data */ |
                                1 << 6 /* Set Namespace Label Data */);
         build_append_int_noprefix(out, cmd_list, sizeof(cmd_list));
+        goto free;
+    case 0x4 /* Get Namespace Label Size */:
+        nvdimm_dsm_func_label_size(nvdimm, out);
         goto free;
     default:
         status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
