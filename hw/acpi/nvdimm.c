@@ -384,6 +384,18 @@ static void nvdimm_build_nfit(GSList *device_list, GArray *table_offsets,
     g_array_free(structures, true);
 }
 
+/*
+ * define UUID for NVDIMM Root Device according to Chapter 3 DSM Interface
+ * for NVDIMM Root Device - Example in DSM Spec Rev1.
+ */
+#define NVDIMM_DSM_ROOT_UUID "2F10E7A4-9E91-11E4-89D3-123B93F75CBA"
+
+/*
+ * Read FIT Function, which is a QEMU internal use only function, more detail
+ * refer to docs/specs/acpi_nvdimm.txt
+ */
+#define NVDIMM_DSM_FUNC_READ_FIT 0xFFFFFFFF
+
 /* define NVDIMM DSM return status codes according to DSM Spec Rev1. */
 enum {
     /* Common return status codes. */
@@ -420,6 +432,11 @@ struct NvdimmFuncInSetLabelData {
 } QEMU_PACKED;
 typedef struct NvdimmFuncInSetLabelData NvdimmFuncInSetLabelData;
 
+struct NvdimmFuncInReadFit {
+    uint32_t offset; /* fit offset */
+} QEMU_PACKED;
+typedef struct NvdimmFuncInReadFit NvdimmFuncInReadFit;
+
 struct NvdimmDsmIn {
     uint32_t handle;
     uint32_t revision;
@@ -429,6 +446,7 @@ struct NvdimmDsmIn {
         uint8_t arg3[0];
         NvdimmFuncInSetLabelData func_set_label_data;
         NvdimmFuncInGetLabelData func_get_label_data;
+        NvdimmFuncInReadFit func_read_fit;
     };
 } QEMU_PACKED;
 typedef struct NvdimmDsmIn NvdimmDsmIn;
@@ -450,13 +468,71 @@ struct NvdimmFuncOutGetLabelData {
 } QEMU_PACKED;
 typedef struct NvdimmFuncOutGetLabelData NvdimmFuncOutGetLabelData;
 
+struct NvdimmFuncOutReadFit {
+    uint32_t status;    /* return status code. */
+    uint32_t length;    /* the length of fit data we read. */
+    uint8_t fit_data[0]; /* fit data. */
+} QEMU_PACKED;
+typedef struct NvdimmFuncOutReadFit NvdimmFuncOutReadFit;
+
 static void nvdimm_dsm_write_status(GArray *out, uint32_t status)
 {
     status = cpu_to_le32(status);
     build_append_int_noprefix(out, status, sizeof(status));
 }
 
-static void nvdimm_dsm_root(NvdimmDsmIn *in, GArray *out)
+/* Build fit memory which is presented to guest via _FIT method. */
+static void nvdimm_build_fit(AcpiNVDIMMState *state)
+{
+    if (!state->fit) {
+        GSList *device_list = nvdimm_get_plugged_device_list();
+
+        nvdimm_debug("Rebuild FIT...\n");
+        state->fit = nvdimm_build_device_structure(device_list);
+        g_slist_free(device_list);
+    }
+}
+
+/* Read FIT data, defined in docs/specs/acpi_nvdimm.txt. */
+static void nvdimm_dsm_func_read_fit(AcpiNVDIMMState *state,
+                                     NvdimmDsmIn *in, GArray *out)
+{
+    NvdimmFuncInReadFit *read_fit = &in->func_read_fit;
+    NvdimmFuncOutReadFit fit_out;
+    uint32_t read_length = TARGET_PAGE_SIZE - sizeof(NvdimmFuncOutReadFit);
+    uint32_t status = NVDIMM_DSM_ROOT_DEV_STATUS_INVALID_PARAS;
+
+    nvdimm_build_fit(state);
+
+    le32_to_cpus(&read_fit->offset);
+
+    nvdimm_debug("Read FIT offset %#x.\n", read_fit->offset);
+
+    if (read_fit->offset > state->fit->len) {
+        nvdimm_debug("offset %#x is beyond fit size (%#x).\n",
+                     read_fit->offset, state->fit->len);
+        goto exit;
+    }
+
+    read_length = MIN(read_length, state->fit->len - read_fit->offset);
+    nvdimm_debug("read length %#x.\n", read_length);
+
+    fit_out.status = cpu_to_le32(NVDIMM_DSM_STATUS_SUCCESS);
+    fit_out.length = cpu_to_le32(read_length);
+    g_array_append_vals(out, &fit_out, sizeof(fit_out));
+
+    if (read_length) {
+        g_array_append_vals(out, state->fit->data + read_fit->offset,
+                            read_length);
+    }
+    return;
+
+exit:
+    nvdimm_dsm_write_status(out, status);
+}
+
+static void nvdimm_dsm_root(AcpiNVDIMMState *state, NvdimmDsmIn *in,
+                            GArray *out)
 {
     uint32_t status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
 
@@ -473,6 +549,10 @@ static void nvdimm_dsm_root(NvdimmDsmIn *in, GArray *out)
 
         build_append_int_noprefix(out, cmd_list, sizeof(cmd_list));
         return;
+    }
+
+    if (in->function == NVDIMM_DSM_FUNC_READ_FIT /* FIT Read */) {
+        return nvdimm_dsm_func_read_fit(state, in, out);
     }
 
     nvdimm_debug("Return status %#x.\n", status);
@@ -710,7 +790,7 @@ nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 
     /* Handle 0 is reserved for NVDIMM Root Device. */
     if (!in->handle) {
-        nvdimm_dsm_root(in, out);
+        nvdimm_dsm_root(state, in, out);
         goto exit;
     }
 
@@ -927,8 +1007,88 @@ static void nvdimm_build_acpi_devices(GSList *device_list, Aml *sb_scope)
      */
     BUILD_DSM_METHOD(dev, method,
                      0 /* 0 is reserved for NVDIMM Root Device*/,
-                     "2F10E7A4-9E91-11E4-89D3-123B93F75CBA"
-                     /* UUID for NVDIMM Root Devices. */);
+                     NVDIMM_DSM_ROOT_UUID /* UUID for NVDIMM Root Devices. */);
+
+    method = aml_method("RFIT", 1);
+    {
+        Aml *ret, *pckg, *ifcond, *ifctx, *dsm_return = aml_local(0);
+
+        aml_append(method, aml_create_dword_field(aml_buffer(4, NULL),
+                                                  aml_int(0), "OFST"));
+
+        /* prepare NvdimmFuncInReadFit.offset */
+        aml_append(method, aml_store(aml_arg(0), aml_name("OFST")));
+        pckg = aml_package(1);
+        aml_append(pckg, aml_name("OFST"));
+
+        ret = aml_call4("_DSM",
+                        aml_touuid(NVDIMM_DSM_ROOT_UUID) /* Root Device UUID */,
+                        aml_int(1) /* Revision 1 */,
+                        aml_int(NVDIMM_DSM_FUNC_READ_FIT) /* Read FIT
+                                                             Function Index */,
+                        pckg);
+        aml_append(method, aml_store(ret, dsm_return));
+
+        aml_append(method, aml_create_dword_field(dsm_return,
+                                          aml_int(0) /* offset at byte 0 */,
+                                          "STAU"));
+        /* if something is wrong during _DSM. */
+        ifcond = aml_equal(aml_int(NVDIMM_DSM_STATUS_SUCCESS),
+                           aml_name("STAU"));
+        ifctx = aml_if(aml_lnot(ifcond));
+        {
+            aml_append(ifctx, aml_return(aml_buffer(0, NULL)));
+        }
+        aml_append(method, ifctx);
+
+        aml_append(method, aml_create_dword_field(dsm_return,
+                                          aml_int(4) /* offset at byte 4. */,
+                                          "BFSZ"));
+        /* if we read the end of fit. */
+        ifctx = aml_if(aml_equal(aml_name("BFSZ"), aml_int(0)));
+        {
+            aml_append(ifctx, aml_return(aml_buffer(0, NULL)));
+        }
+        aml_append(method, ifctx);
+
+        aml_append(method, aml_store(aml_shiftleft(aml_name("BFSZ"),
+                                                   aml_int(3)), aml_local(6)));
+        aml_append(method, aml_create_field(dsm_return,
+                            aml_int(8 * BITS_PER_BYTE), /* offset at byte 8.*/
+                            aml_local(6), "BUFF"));
+        aml_append(method, aml_return(aml_name("BUFF")));
+    }
+    aml_append(dev, method);
+
+    method = aml_method("_FIT", 0);
+    {
+        Aml *whilectx, *fit = aml_local(0), *offset = aml_local(1);
+
+        aml_append(method, aml_store(aml_buffer(0, NULL), fit));
+        aml_append(method, aml_store(aml_int(0), offset));
+
+        whilectx = aml_while(aml_int(1));
+        {
+            Aml *ifctx, *buf = aml_local(2), *bufsize = aml_local(3);
+
+            aml_append(whilectx, aml_store(aml_call1("RFIT", offset), buf));
+            aml_append(whilectx, aml_store(aml_sizeof(buf), bufsize));
+
+            /* finish fit read if no data is read out. */
+            ifctx = aml_if(aml_equal(bufsize, aml_int(0)));
+            {
+                aml_append(ifctx, aml_return(fit));
+            }
+            aml_append(whilectx, ifctx);
+
+            /* update the offset. */
+            aml_append(whilectx, aml_store(aml_add(offset, bufsize), offset));
+            /* append the data we read out to the fit buffer. */
+            aml_append(whilectx, aml_concatenate(fit, buf, fit));
+        }
+        aml_append(method, whilectx);
+    }
+    aml_append(dev, method);
 
     build_nvdimm_devices(device_list, dev);
 
