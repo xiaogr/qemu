@@ -212,6 +212,22 @@ static uint32_t nvdimm_slot_to_dcr_index(int slot)
     return nvdimm_slot_to_spa_index(slot) + 1;
 }
 
+static NVDIMMDevice
+*nvdimm_get_device_by_handle(GSList *list, uint32_t handle)
+{
+    for (; list; list = list->next) {
+        NVDIMMDevice *nvdimm = list->data;
+        int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                           NULL);
+
+        if (nvdimm_slot_to_handle(slot) == handle) {
+            return nvdimm;
+        }
+    }
+
+    return NULL;
+}
+
 /* ACPI 6.0: 5.2.25.1 System Physical Address Range Structure */
 static void
 nvdimm_build_structure_spa(GArray *structures, NVDIMMDevice *nvdimm)
@@ -368,6 +384,29 @@ static void nvdimm_build_nfit(GSList *device_list, GArray *table_offsets,
     g_array_free(structures, true);
 }
 
+/* define NVDIMM DSM return status codes according to DSM Spec Rev1. */
+enum {
+    /* Common return status codes. */
+    /* Success */
+    NVDIMM_DSM_STATUS_SUCCESS = 0,
+    /* Not Supported */
+    NVDIMM_DSM_STATUS_NOT_SUPPORTED = 1,
+
+    /* NVDIMM Root Device _DSM function return status codes*/
+    /* Invalid Input Parameters */
+    NVDIMM_DSM_ROOT_DEV_STATUS_INVALID_PARAS = 2,
+    /* Function-Specific Error */
+    NVDIMM_DSM_ROOT_DEV_STATUS_FUNCTION_SPECIFIC_ERROR = 3,
+
+    /* NVDIMM Device (non-root) _DSM function return status codes*/
+    /* Non-Existing Memory Device */
+    NVDIMM_DSM_DEV_STATUS_NON_EXISTING_MEM_DEV = 2,
+    /* Invalid Input Parameters */
+    NVDIMM_DSM_DEV_STATUS_INVALID_PARAS = 3,
+    /* Vendor Specific Error */
+    NVDIMM_DSM_DEV_STATUS_VENDOR_SPECIFIC_ERROR = 4,
+};
+
 struct nvdimm_dsm_in {
     uint32_t handle;
     uint32_t revision;
@@ -377,10 +416,125 @@ struct nvdimm_dsm_in {
 } QEMU_PACKED;
 typedef struct nvdimm_dsm_in nvdimm_dsm_in;
 
+static void nvdimm_dsm_write_status(GArray *out, uint32_t status)
+{
+    status = cpu_to_le32(status);
+    build_append_int_noprefix(out, status, sizeof(status));
+}
+
+static void nvdimm_dsm_root(nvdimm_dsm_in *in, GArray *out)
+{
+    uint32_t status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
+
+    /*
+     * Query command implemented per ACPI Specification, it is defined in
+     * ACPI 6.0: 9.14.1 _DSM (Device Specific Method).
+     */
+    if (in->function == 0x0) {
+        /*
+         * Set it to zero to indicate no function is supported for NVDIMM
+         * root.
+         */
+        uint64_t cmd_list = cpu_to_le64(0);
+
+        build_append_int_noprefix(out, cmd_list, sizeof(cmd_list));
+        return;
+    }
+
+    nvdimm_debug("Return status %#x.\n", status);
+    nvdimm_dsm_write_status(out, status);
+}
+
+static void nvdimm_dsm_device(nvdimm_dsm_in *in, GArray *out)
+{
+    GSList *list = nvdimm_get_plugged_device_list();
+    NVDIMMDevice *nvdimm = nvdimm_get_device_by_handle(list, in->handle);
+    uint32_t status = NVDIMM_DSM_DEV_STATUS_NON_EXISTING_MEM_DEV;
+    uint64_t cmd_list;
+
+    if (!nvdimm) {
+        goto set_status_free;
+    }
+
+    /* Encode DSM function according to DSM Spec Rev1. */
+    switch (in->function) {
+    /* see comments in nvdimm_dsm_root(). */
+    case 0x0:
+        cmd_list = cpu_to_le64(0x1 /* Bit 0 indicates whether there is
+                                      support for any functions other
+                                      than function 0.
+                                    */                               |
+                               1 << 4 /* Get Namespace Label Size */ |
+                               1 << 5 /* Get Namespace Label Data */ |
+                               1 << 6 /* Set Namespace Label Data */);
+        build_append_int_noprefix(out, cmd_list, sizeof(cmd_list));
+        goto free;
+    default:
+        status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
+    };
+
+set_status_free:
+    nvdimm_debug("Return status %#x.\n", status);
+    nvdimm_dsm_write_status(out, status);
+free:
+    g_slist_free(list);
+}
+
 static uint64_t
 nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 {
-    return 0;
+    AcpiNVDIMMState *state = opaque;
+    MemoryRegion *dsm_ram_mr = &state->ram_mr;
+    nvdimm_dsm_in *in;
+    GArray *out;
+    void *dsm_ram_addr;
+    uint32_t buf_size;
+
+    assert(memory_region_size(dsm_ram_mr) >= sizeof(nvdimm_dsm_in));
+    dsm_ram_addr = memory_region_get_ram_ptr(dsm_ram_mr);
+
+    /*
+     * The DSM memory is mapped to guest address space so an evil guest
+     * can change its content while we are doing DSM emulation. Avoid
+     * this by copying DSM memory to QEMU local memory.
+     */
+    in = g_malloc(memory_region_size(dsm_ram_mr));
+    memcpy(in, dsm_ram_addr, memory_region_size(dsm_ram_mr));
+
+    le32_to_cpus(&in->revision);
+    le32_to_cpus(&in->function);
+    le32_to_cpus(&in->handle);
+
+    nvdimm_debug("Revision %#x Handler %#x Function %#x.\n", in->revision,
+                 in->handle, in->function);
+
+    out = g_array_new(false, true /* clear */, 1);
+
+    if (in->revision != 0x1 /* Current we support DSM Spec Rev1. */) {
+        nvdimm_debug("Revision %#x is not supported, expect %#x.\n",
+                      in->revision, 0x1);
+        nvdimm_dsm_write_status(out, NVDIMM_DSM_STATUS_NOT_SUPPORTED);
+        goto exit;
+    }
+
+    /* Handle 0 is reserved for NVDIMM Root Device. */
+    if (!in->handle) {
+        nvdimm_dsm_root(in, out);
+        goto exit;
+    }
+
+    nvdimm_dsm_device(in, out);
+
+exit:
+    /* Write output result to dsm memory. */
+    memcpy(dsm_ram_addr, out->data, out->len);
+    memory_region_set_dirty(dsm_ram_mr, 0, out->len);
+
+    buf_size = cpu_to_le32(out->len);
+
+    g_free(in);
+    g_array_free(out, true);
+    return buf_size;
 }
 
 static void
