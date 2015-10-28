@@ -33,6 +33,15 @@
  */
 #define MIN_NAMESPACE_LABEL_SIZE      (128UL << 10)
 
+/*
+ * A page staring from 0xFF00000 and IO port 0x0a18 - 0xa1b in guest are
+ * reserved for NVDIMM ACPI emulation, refer to docs/specs/acpi_nvdimm.txt
+ * for detailed design.
+ */
+#define NVDIMM_ACPI_MEM_BASE          0xFF000000ULL
+#define NVDIMM_ACPI_IO_BASE           0x0a18
+#define NVDIMM_ACPI_IO_LEN            4
+
 #define TYPE_NVDIMM      "nvdimm"
 #define NVDIMM(obj)      OBJECT_CHECK(NVDIMMDevice, (obj), TYPE_NVDIMM)
 #define NVDIMM_CLASS(oc) OBJECT_CLASS_CHECK(NVDIMMClass, (oc), TYPE_NVDIMM)
@@ -80,4 +89,29 @@ struct NVDIMMClass {
 };
 typedef struct NVDIMMClass NVDIMMClass;
 
+/*
+ * AcpiNVDIMMState:
+ * @is_enabled: detect if NVDIMM support is enabled.
+ *
+ * @fit: fit buffer which will be accessed via ACPI _FIT method. It is
+ *       dynamically built based on current NVDIMM devices so that it does
+ *       not require to keep consistent during live migration.
+ *
+ * @ram_mr: RAM-based memory region which is mapped into guest address
+ *          space and used to transfer data between OSPM and QEMU.
+ * @io_mr: the IO region used by OSPM to transfer control to QEMU.
+ */
+struct AcpiNVDIMMState {
+    bool is_enabled;
+
+    GArray *fit;
+
+    MemoryRegion ram_mr;
+    MemoryRegion io_mr;
+};
+typedef struct AcpiNVDIMMState AcpiNVDIMMState;
+
+/* Initialize the memory and IO region needed by NVDIMM ACPI emulation.*/
+void nvdimm_init_acpi_state(MemoryRegion *memory, MemoryRegion *io,
+                            Object *owner, AcpiNVDIMMState *state);
 #endif
