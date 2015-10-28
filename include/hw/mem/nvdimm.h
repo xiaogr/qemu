@@ -25,6 +25,14 @@
 
 #include "hw/mem/dimm.h"
 
+#define NVDIMM_DEBUG 0
+#define nvdimm_debug(fmt, ...)                                \
+    do {                                                      \
+        if (NVDIMM_DEBUG) {                                   \
+            fprintf(stderr, "nvdimm: " fmt, ## __VA_ARGS__);  \
+        }                                                     \
+    } while (0)
+
 /*
  * The minimum label data size is required by NVDIMM Namespace
  * specification, please refer to chapter 2 Namespaces:
@@ -114,4 +122,6 @@ typedef struct AcpiNVDIMMState AcpiNVDIMMState;
 /* Initialize the memory and IO region needed by NVDIMM ACPI emulation.*/
 void nvdimm_init_acpi_state(MemoryRegion *memory, MemoryRegion *io,
                             Object *owner, AcpiNVDIMMState *state);
+void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
+                       GArray *linker);
 #endif
