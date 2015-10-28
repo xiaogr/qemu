@@ -572,6 +572,44 @@ exit:
     nvdimm_dsm_write_status(out, status);
 }
 
+/*
+ * DSM Spec Rev1 4.6 Set Namespace Label Data (Function Index 6).
+ */
+static void nvdimm_dsm_func_set_label_data(NVDIMMDevice *nvdimm,
+                                           nvdimm_dsm_in *in, GArray *out)
+{
+    NVDIMMClass *nvc = NVDIMM_GET_CLASS(nvdimm);
+    nvdimm_func_in_set_label_data *set_label_data = &in->func_set_label_data;
+    uint32_t status;
+
+    le32_to_cpus(&set_label_data->offset);
+    le32_to_cpus(&set_label_data->length);
+
+    nvdimm_debug("Write Label Data: offset %#x length %#x.\n",
+                 set_label_data->offset, set_label_data->length);
+
+    if (nvdimm->label_size < set_label_data->offset + set_label_data->length) {
+        nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
+                     set_label_data->offset + set_label_data->length,
+                     nvdimm->label_size);
+        status = NVDIMM_DSM_DEV_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    if (set_label_data->length > nvdimm_get_max_xfer_label_size()) {
+        nvdimm_debug("set length (%#x) is larger than max_xfer (%#x).\n",
+                     set_label_data->length, nvdimm_get_max_xfer_label_size());
+        status = NVDIMM_DSM_DEV_STATUS_INVALID_PARAS;
+        goto exit;
+    }
+
+    status = NVDIMM_DSM_STATUS_SUCCESS;
+    nvc->write_label_data(nvdimm, set_label_data->in_buf,
+                          set_label_data->length, set_label_data->offset);
+exit:
+    nvdimm_dsm_write_status(out, status);
+}
+
 static void nvdimm_dsm_device(nvdimm_dsm_in *in, GArray *out)
 {
     GSList *list = nvdimm_get_plugged_device_list();
@@ -601,6 +639,9 @@ static void nvdimm_dsm_device(nvdimm_dsm_in *in, GArray *out)
         goto free;
     case 0x5 /* Get Namespace Label Data */:
         nvdimm_dsm_func_get_label_data(nvdimm, in, out);
+        goto free;
+    case 0x6 /* Set Namespace Label Data */:
+        nvdimm_dsm_func_set_label_data(nvdimm, in, out);
         goto free;
     default:
         status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
