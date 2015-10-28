@@ -545,6 +545,13 @@ static void nvdimm_dsm_func_get_label_data(NVDIMMDevice *nvdimm,
     nvdimm_debug("Read Label Data: offset %#x length %#x.\n",
                  get_label_data->offset, get_label_data->length);
 
+    if (!nvdimm->reserve_label_data) {
+        nvdimm_debug("read label request on the device without "
+                     "label data reserved.\n");
+        status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
+        goto exit;
+    }
+
     if (nvdimm->label_size < get_label_data->offset + get_label_data->length) {
         nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
                      get_label_data->offset + get_label_data->length,
@@ -587,6 +594,13 @@ static void nvdimm_dsm_func_set_label_data(NVDIMMDevice *nvdimm,
 
     nvdimm_debug("Write Label Data: offset %#x length %#x.\n",
                  set_label_data->offset, set_label_data->length);
+
+    if (!nvdimm->reserve_label_data) {
+        nvdimm_debug("write label request on the device without "
+                     "label data reserved.\n");
+        status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
+        goto exit;
+    }
 
     if (nvdimm->label_size < set_label_data->offset + set_label_data->length) {
         nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
@@ -632,6 +646,12 @@ static void nvdimm_dsm_device(nvdimm_dsm_in *in, GArray *out)
                                1 << 4 /* Get Namespace Label Size */ |
                                1 << 5 /* Get Namespace Label Data */ |
                                1 << 6 /* Set Namespace Label Data */);
+
+        /* no function support if the device does not have label data. */
+        if (!nvdimm->reserve_label_data) {
+            cmd_list = cpu_to_le64(0);
+        }
+
         build_append_int_noprefix(out, cmd_list, sizeof(cmd_list));
         goto free;
     case 0x4 /* Get Namespace Label Size */:
