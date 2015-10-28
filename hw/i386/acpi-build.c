@@ -90,6 +90,7 @@ typedef struct AcpiPmInfo {
     bool s3_disabled;
     bool s4_disabled;
     bool pcihp_bridge_en;
+    bool nvdimm_support;
     uint8_t s4_val;
     uint16_t sci_int;
     uint8_t acpi_enable_cmd;
@@ -231,6 +232,7 @@ static void acpi_get_pm_info(AcpiPmInfo *pm)
     pm->pcihp_bridge_en =
         object_property_get_bool(obj, "acpi-pci-hotplug-with-bridge-support",
                                  NULL);
+    pm->nvdimm_support = object_property_get_bool(obj, "nvdimm-support", NULL);
 }
 
 static void acpi_get_misc_info(AcpiMiscInfo *info)
@@ -1740,6 +1742,10 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
     if (acpi_has_iommu()) {
         acpi_add_table(table_offsets, tables_blob);
         build_dmar_q35(tables_blob, tables->linker);
+    }
+
+    if (pm.nvdimm_support) {
+        nvdimm_build_acpi(table_offsets, tables_blob, tables->linker);
     }
 
     /* Add tables supplied by user (if any) */
