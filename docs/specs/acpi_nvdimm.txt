@@ -1,0 +1,179 @@
+QEMU<->ACPI BIOS NVDIMM interface
+---------------------------------
+
+QEMU supports NVDIMM via ACPI. This document describes the basic concepts of
+NVDIMM ACPI and the interface between QEMU and the ACPI BIOS.
+
+NVDIMM ACPI Background
+----------------------
+NVDIMM is introduced in ACPI 6.0 which defines an NVDIMM root device under
+_SB scope with a _HID of “ACPI0012”. For each NVDIMM present or intended
+to be supported by platform, platform firmware also exposes an ACPI
+Namespace Device under the root device.
+
+The NVDIMM child devices under the NVDIMM root device are defined with _ADR
+corresponding to the NFIT device handle. The NVDIMM root device and the
+NVDIMM devices can have device specific methods (_DSM) to provide additional
+functions specific to a particular NVDIMM implementation.
+
+This is an example from ACPI 6.0, a platform contains one NVDIMM:
+
+Scope (\_SB){
+   Device (NVDR) // Root device
+   {
+      Name (_HID, “ACPI0012”)
+      Method (_STA) {...}
+      Method (_FIT) {...}
+      Method (_DSM, ...) {...}
+      Device (NVD)
+      {
+         Name(_ADR, h) //where h is NFIT Device Handle for this NVDIMM
+         Method (_DSM, ...) {...}
+      }
+   }
+}
+
+Methods supported on both NVDIMM root device and NVDIMM device are
+1) _STA(Status)
+   It returns the current status of a device, which can be one of the
+   following: enabled, disabled, or removed.
+
+   Arguments: None
+
+   Return Value:
+   It returns an An Integer which is defined as followings:
+   Bit [0] – Set if the device is present.
+   Bit [1] – Set if the device is enabled and decoding its resources.
+   Bit [2] – Set if the device should be shown in the UI.
+   Bit [3] – Set if the device is functioning properly (cleared if device
+             failed its diagnostics).
+   Bit [4] – Set if the battery is present.
+   Bits [31:5] – Reserved (must be cleared).
+
+2) _DSM (Device Specific Method)
+   It is a control method that enables devices to provide device specific
+   control functions that are consumed by the device driver.
+   The NVDIMM DSM specification can be found at:
+        http://pmem.io/documents/NVDIMM_DSM_Interface_Example.pdf
+
+   Arguments:
+   Arg0 – A Buffer containing a UUID (16 Bytes)
+   Arg1 – An Integer containing the Revision ID (4 Bytes)
+   Arg2 – An Integer containing the Function Index (4 Bytes)
+   Arg3 – A package containing parameters for the function specified by the
+          UUID, Revision ID, and Function Index
+
+   Return Value:
+   If Function Index = 0, a Buffer containing a function index bitfield.
+   Otherwise, the return value and type depends on the UUID, revision ID
+   and function index which are described in the DSM specification.
+
+Methods on NVDIMM ROOT Device
+_FIT(Firmware Interface Table)
+   It evaluates to a buffer returning data in the format of a series of NFIT
+   Type Structure.
+
+   Arguments: None
+
+   Return Value:
+   A Buffer containing a list of NFIT Type structure entries.
+
+   The detailed definition of the structure can be found at ACPI 6.0: 5.2.25
+   NVDIMM Firmware Interface Table (NFIT).
+
+QEMU NVDIMM Implemention
+========================
+QEMU reserves a page starting from 0xFF00000 and 4 bytes IO Port starting
+from 0x0a18 for NVDIMM ACPI.
+
+Memory 0xFF00000 - 0xFF00FFF:
+   This page is RAM-based and it is used to transfer data between _DSM
+   method and QEMU. If ACPI has control, this pages is owned by ACPI which
+   writes _DSM input data to it, otherwise, it is owned by QEMU which
+   emulates _DSM access and writes the output data to it.
+
+   ACPI Writes _DSM Input Data:
+   [0xFF00000 - 0xFF00003]: 4 bytes, NVDIMM Devcie Handle, 0 is reserved
+                            for NVDIMM Root device.
+   [0xFF00004 - 0xFF00007]: 4 bytes, Revision ID, that is the Arg1 of _DSM
+                            method.
+   [0xFF00008 - 0xFF0000B]: 4 bytes. Function Index, that is the Arg2 of
+                            _DSM method.
+   [0xFF0000C - 0xFF00FFF]: 4084 bytes, the Arg3 of _DSM method
+
+   QEMU Writes Output Data:
+   [0xFF00000 - 0xFF00FFF]: the DSM return result filled by QEMU
+
+IO Port 0x0a18 - 0xa1b:
+   ACPI uses it to transfer control from guest to QEMU and read the size
+   of return result filled by QEMU
+
+   Read Access:
+       [0x0a18 - 0xa1b]: 4 bytes, the buffer size of _DSM output data.
+
+_DSM process diagram:
+---------------------
+The page, 0xFF00000 - 0xFF00FFF, is used by _DSM Virtualization.
+
+ +----------------------+      +-----------------------+
+ |    1. OSPM           |      |    2. OSPM            |
+ | save _DSM input data |      |   read 0x0a18         | Exit to QEMU
+ | to the page          +----->|                       +------------+
+ |                      |      |                       |            |
+ +----------------------+      +-----------------------+            |
+                                                                    |
+                                                                    v
+ +-------------   ----+       +-----------+      +------------------+--------+
+ |      5 QEMU        |       | 4 QEMU    |      |        3. QEMU            |
+ | write _DSM result  |       |  emulate  |      | get _DSM input parameters |
+ | to the page        +<------+ _DSM      +<-----+ from the page             |
+ |                    |       |           |      |                           |
+ +--------+-----------+       +-----------+      +---------------------------+
+          |
+          | Enter Guest
+          |
+          v
+ +--------------------------+      +--------------+
+ |     6 OSPM               |      |   7 OSPM     |
+ | result size is returned  |      |  _DSM return |
+ | by read and get DSM      +----->+              |
+ | result from the page     |      |              |
+ +--------------------------+      +--------------+
+
+ QEMU internal use only _DSM function
+ ------------------------------------
+ There is the function introduced by QEMU and only used by QEMU internal.
+
+ 1) Read FIT
+ As we only reserved one page for NVDIMM ACPI it is impossible to map the
+ whole FIT data to guest's address space. This function is used by _FIT
+ method to read a piece of FIT data from QEMU.
+
+ Input parameters:
+ Arg0 – UUID {set to 2f10e7a4-9e91-11e4-89d3-123b93f75cba}
+ Arg1 – Revision ID (set to 1)
+ Arg2 - 0xFFFFFFFF
+ Arg3 - A package containing a buffer whose layout is as follows:
+
+ +----------+-------------+-------------+-----------------------------------+
+ |  Filed   | Byte Length | Byte Offset | Description                       |
+ +----------+-------------+-------------+-----------------------------------+
+ | offset   | 4           | 0           | the offset of FIT buffer          |
+ +----------+-------------+-------------+-----------------------------------+
+
+ Output:
+ +----------+-------------+-------------+-----------------------------------+
+ |  Filed   | Byte Length | Byte Offset | Description                       |
+ +----------+-------------+-------------+-----------------------------------+
+ | status   | 4           | 0           | return status codes following     |
+ |          |             |             | Chapter 3 in DSM Spec Rev1        |
+ +----------+-------------+-------------+-----------------------------------+
+ | length   | 4           | 4           | the length of FIT buffer read out |
+ +----------+-------------+-------------+-----------------------------------+
+ | fit data | Varies      | 8           | FIT data, its size is indicated   |
+ |          |             |             | by length field above             |
+ +----------+-------------+-------------+-----------------------------------+
+
+ The FIT offset is maintained by the caller itself, current offset plugs
+ the length returned by the function is the next offset we should read.
+ When all the FIT data has been read out, zero length is returned.
