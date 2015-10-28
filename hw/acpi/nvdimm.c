@@ -368,6 +368,15 @@ static void nvdimm_build_nfit(GSList *device_list, GArray *table_offsets,
     g_array_free(structures, true);
 }
 
+struct NvdimmDsmIn {
+    uint32_t handle;
+    uint32_t revision;
+    uint32_t function;
+   /* the remaining size in the page is used by arg3. */
+    uint8_t arg3[0];
+} QEMU_PACKED;
+typedef struct NvdimmDsmIn NvdimmDsmIn;
+
 static uint64_t
 nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -377,6 +386,7 @@ nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 static void
 nvdimm_dsm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
+    fprintf(stderr, "BUG: we never write DSM notification IO Port.\n");
 }
 
 static const MemoryRegionOps nvdimm_dsm_ops = {
@@ -402,6 +412,179 @@ void nvdimm_init_acpi_state(MemoryRegion *memory, MemoryRegion *io,
     memory_region_add_subregion(io, NVDIMM_ACPI_IO_BASE, &state->io_mr);
 }
 
+#define BUILD_STA_METHOD(_dev_, _method_)                                  \
+    do {                                                                   \
+        _method_ = aml_method("_STA", 0);                                  \
+        aml_append(_method_, aml_return(aml_int(0x0f)));                   \
+        aml_append(_dev_, _method_);                                       \
+    } while (0)
+
+#define BUILD_DSM_METHOD(_dev_, _method_, _handle_, _uuid_)                \
+    do {                                                                   \
+        Aml *ifctx, *uuid;                                                 \
+        _method_ = aml_method("_DSM", 4);                                  \
+        /* check UUID if it is we expect, return the errorcode if not.*/   \
+        uuid = aml_touuid(_uuid_);                                         \
+        ifctx = aml_if(aml_lnot(aml_equal(aml_arg(0), uuid)));             \
+        aml_append(ifctx, aml_return(aml_int(1 /* Not Supported */)));     \
+        aml_append(method, ifctx);                                         \
+        aml_append(method, aml_return(aml_call4("NCAL", aml_int(_handle_), \
+                   aml_arg(1), aml_arg(2), aml_arg(3))));                  \
+        aml_append(_dev_, _method_);                                       \
+    } while (0)
+
+#define BUILD_FIELD_UNIT_SIZE(_field_, _byte_, _name_)                     \
+    aml_append(_field_, aml_named_field(_name_, (_byte_) * BITS_PER_BYTE))
+
+#define BUILD_FIELD_UNIT_STRUCT(_field_, _s_, _f_, _name_)                 \
+    BUILD_FIELD_UNIT_SIZE(_field_, sizeof(typeof_field(_s_, _f_)), _name_)
+
+static void build_nvdimm_devices(GSList *device_list, Aml *root_dev)
+{
+    for (; device_list; device_list = device_list->next) {
+        NVDIMMDevice *nvdimm = device_list->data;
+        int slot = object_property_get_int(OBJECT(nvdimm), DIMM_SLOT_PROP,
+                                           NULL);
+        uint32_t handle = nvdimm_slot_to_handle(slot);
+        Aml *dev, *method;
+
+        dev = aml_device("NV%02X", slot);
+        aml_append(dev, aml_name_decl("_ADR", aml_int(handle)));
+
+        BUILD_STA_METHOD(dev, method);
+
+        /*
+         * Chapter 4: _DSM Interface for NVDIMM Device (non-root) - Example
+         * in DSM Spec Rev1.
+         */
+        BUILD_DSM_METHOD(dev, method,
+                         handle /* NVDIMM Device Handle */,
+                         "4309AC30-0D11-11E4-9191-0800200C9A66"
+                         /* UUID for NVDIMM Devices. */);
+
+        aml_append(root_dev, dev);
+    }
+}
+
+static void nvdimm_build_acpi_devices(GSList *device_list, Aml *sb_scope)
+{
+    Aml *dev, *method, *field;
+    uint64_t page_size = TARGET_PAGE_SIZE;
+
+    dev = aml_device("NVDR");
+    aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0012")));
+
+    /* map DSM memory and IO into ACPI namespace. */
+    aml_append(dev, aml_operation_region("NPIO", AML_SYSTEM_IO,
+               NVDIMM_ACPI_IO_BASE, NVDIMM_ACPI_IO_LEN));
+    aml_append(dev, aml_operation_region("NRAM", AML_SYSTEM_MEMORY,
+               NVDIMM_ACPI_MEM_BASE, page_size));
+
+    /*
+     * DSM notifier:
+     * @NOTI: Read it will notify QEMU that _DSM method is being
+     *        called and the parameters can be found in NvdimmDsmIn.
+     *        The value read from it is the buffer size of DSM output
+     *        filled by QEMU.
+     */
+    field = aml_field("NPIO", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_SIZE(field, sizeof(uint32_t), "NOTI");
+    aml_append(dev, field);
+
+    /*
+     * DSM input:
+     * @HDLE: store device's handle, it's zero if the _DSM call happens
+     *        on NVDIMM Root Device.
+     * @REVS: store the Arg1 of _DSM call.
+     * @FUNC: store the Arg2 of _DSM call.
+     * @ARG3: store the Arg3 of _DSM call.
+     *
+     * They are RAM mapping on host so that these accesses never cause
+     * VM-EXIT.
+     */
+    field = aml_field("NRAM", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_STRUCT(field, NvdimmDsmIn, handle, "HDLE");
+    BUILD_FIELD_UNIT_STRUCT(field, NvdimmDsmIn, revision, "REVS");
+    BUILD_FIELD_UNIT_STRUCT(field, NvdimmDsmIn, function, "FUNC");
+    BUILD_FIELD_UNIT_SIZE(field, page_size - offsetof(NvdimmDsmIn, arg3),
+                          "ARG3");
+    aml_append(dev, field);
+
+    /*
+     * DSM output:
+     * @ODAT: the buffer QEMU uses to store the result, the actual size
+     *        filled by QEMU is the value read from NOT1.
+     *
+     * Since the page is reused by both input and out, the input data
+     * will be lost after storing new result into @ODAT.
+    */
+    field = aml_field("NRAM", AML_DWORD_ACC, AML_PRESERVE);
+    BUILD_FIELD_UNIT_SIZE(field, page_size, "ODAT");
+    aml_append(dev, field);
+
+    method = aml_method_serialized("NCAL", 4);
+    {
+        Aml *buffer_size = aml_local(0);
+
+        aml_append(method, aml_store(aml_arg(0), aml_name("HDLE")));
+        aml_append(method, aml_store(aml_arg(1), aml_name("REVS")));
+        aml_append(method, aml_store(aml_arg(2), aml_name("FUNC")));
+
+        /*
+         * transfer control to QEMU and the buffer size filled by
+         * QEMU is returned.
+         */
+        aml_append(method, aml_store(aml_name("NOTI"), buffer_size));
+
+        aml_append(method, aml_store(aml_shiftleft(buffer_size,
+                                       aml_int(3)), buffer_size));
+
+        aml_append(method, aml_create_field(aml_name("ODAT"), aml_int(0),
+                                            buffer_size , "OBUF"));
+        aml_append(method, aml_concatenate(aml_buffer(0, NULL),
+                                           aml_name("OBUF"), aml_local(1)));
+        aml_append(method, aml_return(aml_local(1)));
+    }
+    aml_append(dev, method);
+
+    BUILD_STA_METHOD(dev, method);
+
+    /*
+     * Chapter 3: _DSM Interface for NVDIMM Root Device - Example in DSM
+     * Spec Rev1.
+     */
+    BUILD_DSM_METHOD(dev, method,
+                     0 /* 0 is reserved for NVDIMM Root Device*/,
+                     "2F10E7A4-9E91-11E4-89D3-123B93F75CBA"
+                     /* UUID for NVDIMM Root Devices. */);
+
+    build_nvdimm_devices(device_list, dev);
+
+    aml_append(sb_scope, dev);
+}
+
+static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
+                              GArray *table_data, GArray *linker)
+{
+    Aml *ssdt, *sb_scope;
+
+    acpi_add_table(table_offsets, table_data);
+
+    ssdt = init_aml_allocator();
+    acpi_data_push(ssdt->buf, sizeof(AcpiTableHeader));
+
+    sb_scope = aml_scope("\\_SB");
+    nvdimm_build_acpi_devices(device_list, sb_scope);
+
+    aml_append(ssdt, sb_scope);
+    /* copy AML table into ACPI tables blob and patch header there */
+    g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
+    build_header(linker, table_data,
+        (void *)(table_data->data + table_data->len - ssdt->buf->len),
+        "SSDT", ssdt->buf->len, 1);
+    free_aml_allocator();
+}
+
 void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
                        GArray *linker)
 {
@@ -414,5 +597,6 @@ void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
     }
 
     nvdimm_build_nfit(device_list, table_offsets, table_data, linker);
+    nvdimm_build_ssdt(device_list, table_offsets, table_data, linker);
     g_slist_free(device_list);
 }
