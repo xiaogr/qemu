@@ -587,6 +587,34 @@ exit:
     nvdimm_dsm_write_status(out, status);
 }
 
+/*
+ * DSM Spec Rev1 4.6 Set Namespace Label Data (Function Index 6).
+ */
+static void nvdimm_dsm_func_set_label_data(NVDIMMDevice *nvdimm,
+                                           NvdimmDsmIn *in, GArray *out)
+{
+    NVDIMMClass *nvc = NVDIMM_GET_CLASS(nvdimm);
+    NvdimmFuncInSetLabelData *set_label_data = &in->func_set_label_data;
+    uint32_t status;
+
+    le32_to_cpus(&set_label_data->offset);
+    le32_to_cpus(&set_label_data->length);
+
+    nvdimm_debug("Write Label Data: offset %#x length %#x.\n",
+                 set_label_data->offset, set_label_data->length);
+
+    status = nvdimm_rw_label_data_check(nvdimm, set_label_data->offset,
+                                        set_label_data->length);
+    if (status != NVDIMM_DSM_STATUS_SUCCESS) {
+        goto exit;
+    }
+
+    nvc->write_label_data(nvdimm, set_label_data->in_buf,
+                          set_label_data->length, set_label_data->offset);
+exit:
+    nvdimm_dsm_write_status(out, status);
+}
+
 static void nvdimm_dsm_device(NvdimmDsmIn *in, GArray *out)
 {
     GSList *list = nvdimm_get_plugged_device_list();
@@ -616,6 +644,9 @@ static void nvdimm_dsm_device(NvdimmDsmIn *in, GArray *out)
         goto free;
     case 0x5 /* Get Namespace Label Data */:
         nvdimm_dsm_func_get_label_data(nvdimm, in, out);
+        goto free;
+    case 0x6 /* Set Namespace Label Data */:
+        nvdimm_dsm_func_set_label_data(nvdimm, in, out);
         goto free;
     default:
         status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
