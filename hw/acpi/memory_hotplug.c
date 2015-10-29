@@ -1,6 +1,7 @@
 #include "hw/acpi/memory_hotplug.h"
 #include "hw/acpi/pc-hotplug.h"
 #include "hw/mem/dimm.h"
+#include "hw/mem/nvdimm.h"
 #include "hw/boards.h"
 #include "hw/qdev-core.h"
 #include "trace.h"
@@ -230,6 +231,11 @@ void acpi_memory_plug_cb(ACPIREGS *ar, qemu_irq irq, MemHotplugState *mem_st,
                          DeviceState *dev, Error **errp)
 {
     MemStatus *mdev;
+
+    /* Currently, NVDIMM hotplug has not been supported yet. */
+    if (object_dynamic_cast(OBJECT(dev), TYPE_NVDIMM)) {
+        return;
+    }
 
     mdev = acpi_memory_slot_status(mem_st, dev, errp);
     if (!mdev) {
