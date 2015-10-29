@@ -428,6 +428,7 @@ struct NvdimmDsmIn {
     union {
         uint8_t arg3[0];
         NvdimmFuncInSetLabelData func_set_label_data;
+        NvdimmFuncInGetLabelData func_get_label_data;
     };
 } QEMU_PACKED;
 typedef struct NvdimmDsmIn NvdimmDsmIn;
@@ -527,6 +528,65 @@ static void nvdimm_dsm_func_label_size(NVDIMMDevice *nvdimm, GArray *out)
     g_array_append_vals(out, &func_label_size, sizeof(func_label_size));
 }
 
+static uint32_t nvdimm_rw_label_data_check(NVDIMMDevice *nvdimm,
+                                           uint32_t offset, uint32_t length)
+{
+    if (offset + length < offset) {
+        nvdimm_debug("offset %#x + length %#x is overflow.\n", offset,
+                     length);
+        return NVDIMM_DSM_DEV_STATUS_INVALID_PARAS;
+    }
+
+    if (nvdimm->label_size < offset + length) {
+        nvdimm_debug("position %#x is beyond label data (len = %#lx).\n",
+                     offset + length, nvdimm->label_size);
+        return NVDIMM_DSM_DEV_STATUS_INVALID_PARAS;
+    }
+
+    if (length > nvdimm_get_max_xfer_label_size()) {
+        nvdimm_debug("length (%#x) is larger than max_xfer (%#x).\n",
+                     length, nvdimm_get_max_xfer_label_size());
+        return NVDIMM_DSM_DEV_STATUS_INVALID_PARAS;
+    }
+
+    return NVDIMM_DSM_STATUS_SUCCESS;
+}
+
+/*
+ * DSM Spec Rev1 4.5 Get Namespace Label Data (Function Index 5).
+ */
+static void nvdimm_dsm_func_get_label_data(NVDIMMDevice *nvdimm,
+                                           NvdimmDsmIn *in, GArray *out)
+{
+    NVDIMMClass *nvc = NVDIMM_GET_CLASS(nvdimm);
+    NvdimmFuncInGetLabelData *get_label_data = &in->func_get_label_data;
+    void *buf;
+    uint32_t status;
+
+    le32_to_cpus(&get_label_data->offset);
+    le32_to_cpus(&get_label_data->length);
+
+    nvdimm_debug("Read Label Data: offset %#x length %#x.\n",
+                 get_label_data->offset, get_label_data->length);
+
+    status = nvdimm_rw_label_data_check(nvdimm, get_label_data->offset,
+                                        get_label_data->length);
+    if (status != NVDIMM_DSM_STATUS_SUCCESS) {
+        goto exit;
+    }
+
+    /* write nvdimm_func_out_get_label_data.status. */
+    nvdimm_dsm_write_status(out, status);
+    /* write nvdimm_func_out_get_label_data.out_buf. */
+    buf = acpi_data_push(out, get_label_data->length);
+    nvc->read_label_data(nvdimm, buf, get_label_data->length,
+                         get_label_data->offset);
+    return;
+
+exit:
+    nvdimm_dsm_write_status(out, status);
+}
+
 static void nvdimm_dsm_device(NvdimmDsmIn *in, GArray *out)
 {
     GSList *list = nvdimm_get_plugged_device_list();
@@ -553,6 +613,9 @@ static void nvdimm_dsm_device(NvdimmDsmIn *in, GArray *out)
         goto free;
     case 0x4 /* Get Namespace Label Size */:
         nvdimm_dsm_func_label_size(nvdimm, out);
+        goto free;
+    case 0x5 /* Get Namespace Label Data */:
+        nvdimm_dsm_func_get_label_data(nvdimm, in, out);
         goto free;
     default:
         status = NVDIMM_DSM_STATUS_NOT_SUPPORTED;
