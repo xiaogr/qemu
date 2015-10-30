@@ -322,6 +322,16 @@ bool e820_get_entry(int, uint32_t, uint64_t *, uint64_t *);
             .driver   = "host" "-" TYPE_X86_CPU,\
             .property = "host-cache-info",\
             .value    = "on",\
+        },\
+        {\
+            .driver   = "PIIX4_PM",\
+            .property = "nvdimm-support",\
+            .value    = "off",\
+        },\
+        {\
+            .driver   = "ICH9-LPC",\
+            .property = "nvdimm-support",\
+            .value    = "off",\
         },
 
 #define PC_COMPAT_2_3 \

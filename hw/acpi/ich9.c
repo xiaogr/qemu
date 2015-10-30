@@ -280,6 +280,12 @@ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm,
         acpi_memory_hotplug_init(pci_address_space_io(lpc_pci), OBJECT(lpc_pci),
                                  &pm->acpi_memory_hotplug);
     }
+
+    if (pm->acpi_nvdimm_state.is_enabled) {
+        nvdimm_init_acpi_state(pci_address_space(lpc_pci),
+                               pci_address_space_io(lpc_pci), OBJECT(lpc_pci),
+                               &pm->acpi_nvdimm_state);
+    }
 }
 
 static void ich9_pm_get_gpe0_blk(Object *obj, Visitor *v,
@@ -305,6 +311,20 @@ static void ich9_pm_set_memory_hotplug_support(Object *obj, bool value,
     ICH9LPCState *s = ICH9_LPC_DEVICE(obj);
 
     s->pm.acpi_memory_hotplug.is_enabled = value;
+}
+
+static bool ich9_pm_get_nvdimm_support(Object *obj, Error **errp)
+{
+    ICH9LPCState *s = ICH9_LPC_DEVICE(obj);
+
+    return s->pm.acpi_nvdimm_state.is_enabled;
+}
+
+static void ich9_pm_set_nvdimm_support(Object *obj, bool value, Error **errp)
+{
+    ICH9LPCState *s = ICH9_LPC_DEVICE(obj);
+
+    s->pm.acpi_nvdimm_state.is_enabled = value;
 }
 
 static void ich9_pm_get_disable_s3(Object *obj, Visitor *v,
@@ -418,6 +438,10 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
     object_property_add_bool(obj, "memory-hotplug-support",
                              ich9_pm_get_memory_hotplug_support,
                              ich9_pm_set_memory_hotplug_support,
+                             NULL);
+    object_property_add_bool(obj, "nvdimm-support",
+                             ich9_pm_get_nvdimm_support,
+                             ich9_pm_set_nvdimm_support,
                              NULL);
     object_property_add(obj, ACPI_PM_PROP_S3_DISABLED, "uint8",
                         ich9_pm_get_disable_s3,
