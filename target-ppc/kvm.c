@@ -308,28 +308,13 @@ static void kvm_get_smmu_info(PowerPCCPU *cpu, struct kvm_ppc_smmu_info *info)
 
 static long gethugepagesize(const char *mem_path)
 {
-    struct statfs fs;
-    int ret;
+    long size = qemu_file_get_page_size(mem_path);
 
-    do {
-        ret = statfs(mem_path, &fs);
-    } while (ret != 0 && errno == EINTR);
-
-    if (ret != 0) {
-        fprintf(stderr, "Couldn't statfs() memory path: %s\n",
-                strerror(errno));
+    if (!size) {
         exit(1);
     }
 
-#define HUGETLBFS_MAGIC       0x958458f6
-
-    if (fs.f_type != HUGETLBFS_MAGIC) {
-        /* Explicit mempath, but it's ordinary pages */
-        return getpagesize();
-    }
-
-    /* It's hugepage, return the huge page size */
-    return fs.f_bsize;
+    return size;
 }
 
 static int find_max_supported_pagesize(Object *obj, void *opaque)
