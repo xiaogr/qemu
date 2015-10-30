@@ -482,7 +482,7 @@ static void numa_stat_memory_devices(uint64_t node_mem[])
     MemoryDeviceInfoList **prev = &info_list;
     MemoryDeviceInfoList *info;
 
-    qmp_pc_dimm_device_list(qdev_get_machine(), &prev);
+    qmp_dimm_device_list(qdev_get_machine(), &prev);
     for (info = info_list; info; info = info->next) {
         MemoryDeviceInfo *value = info->value;
 

@@ -1952,7 +1952,7 @@ void hmp_info_memory_devices(Monitor *mon, const QDict *qdict)
     MemoryDeviceInfoList *info_list = qmp_query_memory_devices(&err);
     MemoryDeviceInfoList *info;
     MemoryDeviceInfo *value;
-    PCDIMMDeviceInfo *di;
+    DIMMDeviceInfo *di;
 
     for (info = info_list; info; info = info->next) {
         value = info->value;
