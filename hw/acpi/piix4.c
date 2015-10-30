@@ -34,6 +34,7 @@
 #include "hw/acpi/cpu_hotplug.h"
 #include "hw/hotplug.h"
 #include "hw/mem/dimm.h"
+#include "hw/mem/nvdimm.h"
 #include "hw/acpi/memory_hotplug.h"
 #include "hw/acpi/acpi_dev_interface.h"
 #include "hw/xen/xen.h"
@@ -86,6 +87,8 @@ typedef struct PIIX4PMState {
     AcpiCpuHotplug gpe_cpu;
 
     MemHotplugState acpi_memory_hotplug;
+
+    AcpiNVDIMMState acpi_nvdimm_state;
 } PIIX4PMState;
 
 #define TYPE_PIIX4_PM "PIIX4_PM"
@@ -93,7 +96,8 @@ typedef struct PIIX4PMState {
 #define PIIX4_PM(obj) \
     OBJECT_CHECK(PIIX4PMState, (obj), TYPE_PIIX4_PM)
 
-static void piix4_acpi_system_hot_add_init(MemoryRegion *parent,
+static void piix4_acpi_system_hot_add_init(MemoryRegion *mem_parent,
+                                           MemoryRegion *io_parent,
                                            PCIBus *bus, PIIX4PMState *s);
 
 #define ACPI_ENABLE 0xf1
@@ -486,7 +490,8 @@ static void piix4_pm_realize(PCIDevice *dev, Error **errp)
     qemu_add_machine_init_done_notifier(&s->machine_ready);
     qemu_register_reset(piix4_reset, s);
 
-    piix4_acpi_system_hot_add_init(pci_address_space_io(dev), dev->bus, s);
+    piix4_acpi_system_hot_add_init(pci_address_space(dev),
+                                   pci_address_space_io(dev), dev->bus, s);
 
     piix4_pm_add_propeties(s);
 }
@@ -558,21 +563,27 @@ static const MemoryRegionOps piix4_gpe_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
-static void piix4_acpi_system_hot_add_init(MemoryRegion *parent,
+static void piix4_acpi_system_hot_add_init(MemoryRegion *mem_parent,
+                                           MemoryRegion *io_parent,
                                            PCIBus *bus, PIIX4PMState *s)
 {
     memory_region_init_io(&s->io_gpe, OBJECT(s), &piix4_gpe_ops, s,
                           "acpi-gpe0", GPE_LEN);
-    memory_region_add_subregion(parent, GPE_BASE, &s->io_gpe);
+    memory_region_add_subregion(io_parent, GPE_BASE, &s->io_gpe);
 
-    acpi_pcihp_init(OBJECT(s), &s->acpi_pci_hotplug, bus, parent,
+    acpi_pcihp_init(OBJECT(s), &s->acpi_pci_hotplug, bus, io_parent,
                     s->use_acpi_pci_hotplug);
 
-    acpi_cpu_hotplug_init(parent, OBJECT(s), &s->gpe_cpu,
+    acpi_cpu_hotplug_init(io_parent, OBJECT(s), &s->gpe_cpu,
                           PIIX4_CPU_HOTPLUG_IO_BASE);
 
     if (s->acpi_memory_hotplug.is_enabled) {
-        acpi_memory_hotplug_init(parent, OBJECT(s), &s->acpi_memory_hotplug);
+        acpi_memory_hotplug_init(io_parent, OBJECT(s), &s->acpi_memory_hotplug);
+    }
+
+    if (s->acpi_nvdimm_state.is_enabled) {
+        nvdimm_init_acpi_state(mem_parent, io_parent, OBJECT(s),
+                               &s->acpi_nvdimm_state);
     }
 }
 
@@ -592,6 +603,8 @@ static Property piix4_pm_properties[] = {
                      use_acpi_pci_hotplug, true),
     DEFINE_PROP_BOOL("memory-hotplug-support", PIIX4PMState,
                      acpi_memory_hotplug.is_enabled, true),
+    DEFINE_PROP_BOOL("nvdimm-support", PIIX4PMState,
+                     acpi_nvdimm_state.is_enabled, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 
