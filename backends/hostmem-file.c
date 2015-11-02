@@ -38,12 +38,26 @@ file_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
 {
     HostMemoryBackendFile *fb = MEMORY_BACKEND_FILE(backend);
 
-    if (!backend->size) {
-        error_setg(errp, "can't create backend with size 0");
-        return;
-    }
     if (!fb->mem_path) {
         error_setg(errp, "mem-path property not set");
+        return;
+    }
+
+    if (!backend->size) {
+        Error *local_err = NULL;
+
+        /*
+         * use the whole file size if @size is not specified.
+         */
+        backend->size = qemu_file_getlength(fb->mem_path, &local_err);
+        if (local_err) {
+            error_propagate(errp, local_err);
+            return;
+        }
+    }
+
+    if (!backend->size) {
+        error_setg(errp, "can't create backend on the file whose size is 0");
         return;
     }
 
