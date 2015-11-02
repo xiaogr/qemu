@@ -45,6 +45,11 @@
 extern int madvise(caddr_t, size_t, int);
 #endif
 
+#ifdef CONFIG_LINUX
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+#endif
+
 #include "qemu-common.h"
 #include "qemu/sockets.h"
 #include "qemu/error-report.h"
@@ -432,6 +437,21 @@ writev(int fd, const struct iovec *iov, int iov_cnt)
 int64_t qemu_fd_getlength(int fd)
 {
     int64_t size;
+
+#ifdef CONFIG_LINUX
+    struct stat stat_buf;
+    if (fstat(fd, &stat_buf) < 0) {
+        return -errno;
+    }
+
+    if ((S_ISBLK(stat_buf.st_mode)) && !ioctl(fd, BLKGETSIZE64, &size)) {
+        /* The size of block device is larger than max int64_t? */
+        if (size < 0) {
+            return -EOVERFLOW;
+        }
+        return size;
+    }
+#endif
 
     size = lseek(fd, 0, SEEK_END);
     if (size < 0) {
