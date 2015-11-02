@@ -428,3 +428,34 @@ writev(int fd, const struct iovec *iov, int iov_cnt)
     return readv_writev(fd, iov, iov_cnt, true);
 }
 #endif
+
+int64_t qemu_fd_getlength(int fd)
+{
+    int64_t size;
+
+    size = lseek(fd, 0, SEEK_END);
+    if (size < 0) {
+        return -errno;
+    }
+    return size;
+}
+
+size_t qemu_file_getlength(const char *file, Error **errp)
+{
+    int64_t size;
+    int fd = qemu_open(file, O_RDONLY);
+
+    if (fd < 0) {
+        error_setg_file_open(errp, errno, file);
+        return 0;
+    }
+
+    size = qemu_fd_getlength(fd);
+    if (size < 0) {
+        error_setg_errno(errp, -size, "can't get size of file %s", file);
+        size = 0;
+    }
+
+    qemu_close(fd);
+    return size;
+}

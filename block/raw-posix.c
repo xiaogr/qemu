@@ -1592,18 +1592,13 @@ static int64_t raw_getlength(BlockDriverState *bs)
 {
     BDRVRawState *s = bs->opaque;
     int ret;
-    int64_t size;
 
     ret = fd_open(bs);
     if (ret < 0) {
         return ret;
     }
 
-    size = lseek(s->fd, 0, SEEK_END);
-    if (size < 0) {
-        return -errno;
-    }
-    return size;
+    return qemu_fd_getlength(s->fd);
 }
 #endif
 

@@ -303,4 +303,6 @@ int qemu_read_password(char *buf, int buf_size);
 pid_t qemu_fork(Error **errp);
 
 size_t qemu_file_get_page_size(const char *mem_path, Error **errp);
+int64_t qemu_fd_getlength(int fd);
+size_t qemu_file_getlength(const char *file, Error **errp);
 #endif
