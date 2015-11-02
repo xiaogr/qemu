@@ -22,7 +22,17 @@
 
 static MemoryRegion *pc_dimm_get_memory_region(DIMMDevice *dimm)
 {
-    return host_memory_backend_get_memory(dimm->hostmem, &error_abort);
+    Error *local_err = NULL;
+    MemoryRegion *mr;
+
+    mr = host_memory_backend_get_memory(dimm->hostmem, &local_err);
+
+    /*
+     * plug a pc-dimm device whose backend memory was not properly
+     * initialized?
+     */
+    assert(!local_err && mr);
+    return mr;
 }
 
 static void pc_dimm_class_init(ObjectClass *oc, void *data)
