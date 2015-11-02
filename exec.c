@@ -1184,25 +1184,25 @@ static void *file_ram_alloc(RAMBlock *block,
     char *c;
     void *area;
     int fd;
-    uint64_t hpagesize;
+    uint64_t pagesize;
     Error *local_err = NULL;
 
-    hpagesize = qemu_file_get_page_size(path, &local_err);
+    pagesize = qemu_file_get_page_size(path, &local_err);
     if (local_err) {
         error_propagate(errp, local_err);
         goto error;
     }
 
-    if (hpagesize == getpagesize()) {
-        fprintf(stderr, "Warning: path not on HugeTLBFS: %s\n", path);
+    if (pagesize == getpagesize()) {
+        fprintf(stderr, "Memory is not allocated from HugeTlbfs.\n");
     }
 
-    block->mr->align = hpagesize;
+    block->mr->align = pagesize;
 
-    if (memory < hpagesize) {
+    if (memory < pagesize) {
         error_setg(errp, "memory size 0x" RAM_ADDR_FMT " must be equal to "
-                   "or larger than huge page size 0x%" PRIx64,
-                   memory, hpagesize);
+                   "or larger than page size 0x%" PRIx64,
+                   memory, pagesize);
         goto error;
     }
 
@@ -1226,14 +1226,14 @@ static void *file_ram_alloc(RAMBlock *block,
     fd = mkstemp(filename);
     if (fd < 0) {
         error_setg_errno(errp, errno,
-                         "unable to create backing store for hugepages");
+                         "unable to create backing store for path %s", path);
         g_free(filename);
         goto error;
     }
     unlink(filename);
     g_free(filename);
 
-    memory = ROUND_UP(memory, hpagesize);
+    memory = ROUND_UP(memory, pagesize);
 
     /*
      * ftruncate is not supported by hugetlbfs in older
@@ -1245,10 +1245,10 @@ static void *file_ram_alloc(RAMBlock *block,
         perror("ftruncate");
     }
 
-    area = qemu_ram_mmap(fd, memory, hpagesize, block->flags & RAM_SHARED);
+    area = qemu_ram_mmap(fd, memory, pagesize, block->flags & RAM_SHARED);
     if (area == MAP_FAILED) {
         error_setg_errno(errp, errno,
-                         "unable to map backing store for hugepages");
+                         "unable to map backing store for path %s", path);
         close(fd);
         goto error;
     }
