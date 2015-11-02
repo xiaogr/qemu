@@ -340,7 +340,7 @@ static void sigbus_handler(int signal)
     siglongjmp(sigjump, 1);
 }
 
-static size_t fd_getpagesize(int fd)
+static size_t fd_getpagesize(int fd, Error **errp)
 {
 #ifdef CONFIG_LINUX
     struct statfs fs;
@@ -351,13 +351,34 @@ static size_t fd_getpagesize(int fd)
             ret = fstatfs(fd, &fs);
         } while (ret != 0 && errno == EINTR);
 
-        if (ret == 0 && fs.f_type == HUGETLBFS_MAGIC) {
+        if (ret) {
+            error_setg_errno(errp, errno, "fstatfs is failed");
+            return 0;
+        }
+
+        if (fs.f_type == HUGETLBFS_MAGIC) {
             return fs.f_bsize;
         }
     }
 #endif
 
     return getpagesize();
+}
+
+size_t qemu_file_get_page_size(const char *path, Error **errp)
+{
+    size_t size = 0;
+    int fd = qemu_open(path, O_RDONLY);
+
+    if (fd < 0) {
+        error_setg_file_open(errp, errno, path);
+        goto exit;
+    }
+
+    size = fd_getpagesize(fd, errp);
+    qemu_close(fd);
+exit:
+    return size;
 }
 
 void os_mem_prealloc(int fd, char *area, size_t memory)
@@ -387,8 +408,16 @@ void os_mem_prealloc(int fd, char *area, size_t memory)
         exit(1);
     } else {
         int i;
-        size_t hpagesize = fd_getpagesize(fd);
-        size_t numpages = DIV_ROUND_UP(memory, hpagesize);
+        Error *local_err = NULL;
+        size_t hpagesize = fd_getpagesize(fd, &local_err);
+        size_t numpages;
+
+        if (local_err) {
+            error_report_err(local_err);
+            exit(1);
+        }
+
+        numpages = DIV_ROUND_UP(memory, hpagesize);
 
         /* MAP_POPULATE silently ignores failures */
         for (i = 0; i < numpages; i++) {

@@ -462,6 +462,11 @@ size_t getpagesize(void)
     return system_info.dwPageSize;
 }
 
+size_t qemu_file_get_page_size(const char *path, Error **errp)
+{
+    return getpagesize();
+}
+
 void os_mem_prealloc(int fd, char *area, size_t memory)
 {
     int i;
