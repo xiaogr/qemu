@@ -381,7 +381,8 @@ build_spcr(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     spcr->pci_device_id = 0xffff;  /* PCI Device ID: not a PCI device */
     spcr->pci_vendor_id = 0xffff;  /* PCI Vendor ID: not a PCI device */
 
-    build_header(linker, table_data, (void *)spcr, "SPCR", sizeof(*spcr), 2);
+    build_header(linker, table_data, (void *)spcr, "SPCR", sizeof(*spcr), 2,
+                 NULL);
 }
 
 static void
@@ -400,7 +401,7 @@ build_mcfg(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     mcfg->allocation[0].end_bus_number = (memmap[VIRT_PCIE_ECAM].size
                                           / PCIE_MMCFG_SIZE_MIN) - 1;
 
-    build_header(linker, table_data, (void *)mcfg, "MCFG", len, 1);
+    build_header(linker, table_data, (void *)mcfg, "MCFG", len, 1, NULL);
 }
 
 /* GTDT */
@@ -426,7 +427,7 @@ build_gtdt(GArray *table_data, GArray *linker)
 
     build_header(linker, table_data,
                  (void *)(table_data->data + gtdt_start), "GTDT",
-                 table_data->len - gtdt_start, 2);
+                 table_data->len - gtdt_start, 2, NULL);
 }
 
 /* MADT */
@@ -488,7 +489,7 @@ build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info,
 
     build_header(linker, table_data,
                  (void *)(table_data->data + madt_start), "APIC",
-                 table_data->len - madt_start, 3);
+                 table_data->len - madt_start, 3, NULL);
 }
 
 /* FADT */
@@ -513,7 +514,7 @@ build_fadt(GArray *table_data, GArray *linker, unsigned dsdt)
                                    sizeof fadt->dsdt);
 
     build_header(linker, table_data,
-                 (void *)fadt, "FACP", sizeof(*fadt), 5);
+                 (void *)fadt, "FACP", sizeof(*fadt), 5, NULL);
 }
 
 /* DSDT */
@@ -546,7 +547,7 @@ build_dsdt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     g_array_append_vals(table_data, dsdt->buf->data, dsdt->buf->len);
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - dsdt->buf->len),
-        "DSDT", dsdt->buf->len, 2);
+        "DSDT", dsdt->buf->len, 2, NULL);
     free_aml_allocator();
 }
 
