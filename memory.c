@@ -1688,7 +1688,9 @@ void memory_region_add_eventfd(MemoryRegion *mr,
     };
     unsigned i;
 
-    adjust_endianness(mr, &mrfd.data, size);
+    if (size) {
+        adjust_endianness(mr, &mrfd.data, size);
+    }
     memory_region_transaction_begin();
     for (i = 0; i < mr->ioeventfd_nb; ++i) {
         if (memory_region_ioeventfd_before(mrfd, mr->ioeventfds[i])) {
@@ -1721,7 +1723,9 @@ void memory_region_del_eventfd(MemoryRegion *mr,
     };
     unsigned i;
 
-    adjust_endianness(mr, &mrfd.data, size);
+    if (size) {
+        adjust_endianness(mr, &mrfd.data, size);
+    }
     memory_region_transaction_begin();
     for (i = 0; i < mr->ioeventfd_nb; ++i) {
         if (memory_region_ioeventfd_equal(mrfd, mr->ioeventfds[i])) {
@@ -2036,6 +2040,9 @@ static void listener_add_address_space(MemoryListener *listener,
         return;
     }
 
+    if (listener->begin) {
+        listener->begin(listener);
+    }
     if (global_dirty_log) {
         if (listener->log_global_start) {
             listener->log_global_start(listener);
@@ -2052,9 +2059,15 @@ static void listener_add_address_space(MemoryListener *listener,
             .offset_within_address_space = int128_get64(fr->addr.start),
             .readonly = fr->readonly,
         };
+        if (fr->dirty_log_mask && listener->log_start) {
+            listener->log_start(listener, &section, 0, fr->dirty_log_mask);
+        }
         if (listener->region_add) {
             listener->region_add(listener, &section);
         }
+    }
+    if (listener->commit) {
+        listener->commit(listener);
     }
     flatview_unref(view);
 }

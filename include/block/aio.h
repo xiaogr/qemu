@@ -124,6 +124,11 @@ struct AioContext {
     QEMUTimerListGroup tlg;
 
     int external_disable_cnt;
+
+    /* epoll(7) state used when built with CONFIG_EPOLL */
+    int epollfd;
+    bool epoll_enabled;
+    bool epoll_available;
 };
 
 /**
@@ -207,6 +212,11 @@ void aio_notify(AioContext *ctx);
  * to clear the EventNotifier only if aio_notify() had been called.
  */
 void aio_notify_accept(AioContext *ctx);
+
+/**
+ * aio_bh_call: Executes callback function of the specified BH.
+ */
+void aio_bh_call(QEMUBH *bh);
 
 /**
  * aio_bh_poll: Poll bottom halves for an AioContext.
@@ -401,6 +411,17 @@ static inline void aio_enable_external(AioContext *ctx)
 }
 
 /**
+ * aio_external_disabled:
+ * @ctx: the aio context
+ *
+ * Return true if the external clients are disabled.
+ */
+static inline bool aio_external_disabled(AioContext *ctx)
+{
+    return atomic_read(&ctx->external_disable_cnt);
+}
+
+/**
  * aio_node_check:
  * @ctx: the aio context
  * @is_external: Whether or not the checked node is an external event source.
@@ -412,5 +433,13 @@ static inline bool aio_node_check(AioContext *ctx, bool is_external)
 {
     return !is_external || !atomic_read(&ctx->external_disable_cnt);
 }
+
+/**
+ * aio_context_setup:
+ * @ctx: the aio context
+ *
+ * Initialize the aio context.
+ */
+void aio_context_setup(AioContext *ctx, Error **errp);
 
 #endif

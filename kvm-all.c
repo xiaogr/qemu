@@ -109,6 +109,7 @@ bool kvm_allowed;
 bool kvm_readonly_mem_allowed;
 bool kvm_vm_attributes_allowed;
 bool kvm_direct_msi_allowed;
+bool kvm_ioeventfd_any_length_allowed;
 
 static const KVMCapabilityInfo kvm_required_capabilites[] = {
     KVM_CAP_INFO(USER_MEMORY),
@@ -1461,7 +1462,6 @@ static int kvm_init(MachineState *ms)
      * page size for the system though.
      */
     assert(TARGET_PAGE_SIZE <= getpagesize());
-    page_size_init();
 
     s->sigmask_len = 8;
 
@@ -1611,6 +1611,9 @@ static int kvm_init(MachineState *ms)
 
     kvm_vm_attributes_allowed =
         (kvm_check_extension(s, KVM_CAP_VM_ATTRIBUTES) > 0);
+
+    kvm_ioeventfd_any_length_allowed =
+        (kvm_check_extension(s, KVM_CAP_IOEVENTFD_ANY_LENGTH) > 0);
 
     ret = kvm_arch_init(ms, s);
     if (ret < 0) {
@@ -1764,11 +1767,6 @@ static void do_kvm_cpu_synchronize_post_init(void *arg)
 void kvm_cpu_synchronize_post_init(CPUState *cpu)
 {
     run_on_cpu(cpu, do_kvm_cpu_synchronize_post_init, cpu);
-}
-
-void kvm_cpu_clean_state(CPUState *cpu)
-{
-    cpu->kvm_vcpu_dirty = false;
 }
 
 int kvm_cpu_exec(CPUState *cpu)

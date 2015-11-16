@@ -204,7 +204,7 @@ static bool type_is_ancestor(TypeImpl *type, TypeImpl *target_type)
 {
     assert(target_type);
 
-    /* Check if typename is a direct ancestor of type */
+    /* Check if target_type is a direct ancestor of type */
     while (type) {
         if (type == target_type) {
             return true;
@@ -1330,8 +1330,8 @@ static Object *object_resolve_link(Object *obj, const char *name,
     target = object_resolve_path_type(path, target_type, &ambiguous);
 
     if (ambiguous) {
-        error_set(errp, ERROR_CLASS_GENERIC_ERROR,
-                  "Path '%s' does not uniquely identify an object", path);
+        error_setg(errp, "Path '%s' does not uniquely identify an object",
+                   path);
     } else if (!target) {
         target = object_resolve_path(path, &ambiguous);
         if (target || ambiguous) {

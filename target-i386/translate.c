@@ -7716,20 +7716,43 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             }
             break;
         case 5: /* lfence */
-        case 6: /* mfence */
             if ((modrm & 0xc7) != 0xc0 || !(s->cpuid_features & CPUID_SSE2))
                 goto illegal_op;
             break;
-        case 7: /* sfence / clflush */
-            if ((modrm & 0xc7) == 0xc0) {
-                /* sfence */
-                /* XXX: also check for cpuid_ext2_features & CPUID_EXT2_EMMX */
-                if (!(s->cpuid_features & CPUID_SSE))
+        case 6: /* mfence/clwb */
+            if (s->prefix & PREFIX_DATA) {
+                /* clwb */
+                if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_CLWB))
                     goto illegal_op;
+                gen_nop_modrm(env, s, modrm);
             } else {
-                /* clflush */
-                if (!(s->cpuid_features & CPUID_CLFLUSH))
+                /* mfence */
+                if ((modrm & 0xc7) != 0xc0 || !(s->cpuid_features & CPUID_SSE2))
                     goto illegal_op;
+            }
+            break;
+        case 7: /* sfence / clflush / clflushopt / pcommit */
+            if ((modrm & 0xc7) == 0xc0) {
+                if (s->prefix & PREFIX_DATA) {
+                    /* pcommit */
+                    if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_PCOMMIT))
+                        goto illegal_op;
+                } else {
+                    /* sfence */
+                    /* XXX: also check for cpuid_ext2_features & CPUID_EXT2_EMMX */
+                    if (!(s->cpuid_features & CPUID_SSE))
+                        goto illegal_op;
+                }
+            } else {
+                if (s->prefix & PREFIX_DATA) {
+                    /* clflushopt */
+                    if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_CLFLUSHOPT))
+                        goto illegal_op;
+                } else {
+                    /* clflush */
+                    if (!(s->cpuid_features & CPUID_CLFLUSH))
+                        goto illegal_op;
+                }
                 gen_lea_modrm(env, s, modrm);
             }
             break;
@@ -7962,6 +7985,11 @@ void gen_intermediate_code(CPUX86State *env, TranslationBlock *tb)
                                          tb->flags & HF_RF_MASK
                                          ? BP_GDB : BP_ANY))) {
             gen_debug(dc, pc_ptr - dc->cs_base);
+            /* The address covered by the breakpoint must be included in
+               [tb->pc, tb->pc + tb->size) in order to for it to be
+               properly cleared -- thus we increment the PC here so that
+               the logic setting tb->size below does the right thing.  */
+            pc_ptr += 1;
             goto done_generating;
         }
         if (num_insns == max_insns && (tb->cflags & CF_LAST_IO)) {
