@@ -26,4 +26,16 @@
 #include "hw/mem/pc-dimm.h"
 
 #define TYPE_NVDIMM      "nvdimm"
+
+/*
+ * AcpiNVDIMMState:
+ * @is_enabled: detect if NVDIMM support is enabled.
+ */
+struct NVDIMMAcpiState {
+    bool is_enabled;
+};
+typedef struct NVDIMMAcpiState NVDIMMAcpiState;
+
+void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
+                       GArray *linker);
 #endif

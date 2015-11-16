@@ -34,6 +34,7 @@
 #include "hw/acpi/cpu_hotplug.h"
 #include "hw/hotplug.h"
 #include "hw/mem/pc-dimm.h"
+#include "hw/mem/nvdimm.h"
 #include "hw/acpi/memory_hotplug.h"
 #include "hw/acpi/acpi_dev_interface.h"
 #include "hw/xen/xen.h"
@@ -86,6 +87,7 @@ typedef struct PIIX4PMState {
     AcpiCpuHotplug gpe_cpu;
 
     MemHotplugState acpi_memory_hotplug;
+    NVDIMMAcpiState nvdimm_acpi_state;
 } PIIX4PMState;
 
 #define TYPE_PIIX4_PM "PIIX4_PM"
@@ -592,6 +594,8 @@ static Property piix4_pm_properties[] = {
                      use_acpi_pci_hotplug, true),
     DEFINE_PROP_BOOL("memory-hotplug-support", PIIX4PMState,
                      acpi_memory_hotplug.is_enabled, true),
+    DEFINE_PROP_BOOL("nvdimm-support", PIIX4PMState,
+                     nvdimm_acpi_state.is_enabled, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 

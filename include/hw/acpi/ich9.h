@@ -26,6 +26,7 @@
 #include "hw/acpi/memory_hotplug.h"
 #include "hw/acpi/acpi_dev_interface.h"
 #include "hw/acpi/tco.h"
+#include "hw/mem/nvdimm.h"
 
 typedef struct ICH9LPCPMRegs {
     /*
@@ -51,6 +52,8 @@ typedef struct ICH9LPCPMRegs {
     AcpiCpuHotplug gpe_cpu;
 
     MemHotplugState acpi_memory_hotplug;
+
+    NVDIMMAcpiState nvdimm_acpi_state;
 
     uint8_t disable_s3;
     uint8_t disable_s4;
