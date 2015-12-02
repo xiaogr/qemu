@@ -1877,6 +1877,20 @@ static bool pc_machine_get_aligned_dimm(Object *obj, Error **errp)
     return pcms->enforce_aligned_dimm;
 }
 
+static bool pc_machine_get_nvdimm(Object *obj, Error **errp)
+{
+    PCMachineState *pcms = PC_MACHINE(obj);
+
+    return pcms->nvdimm;
+}
+
+static void pc_machine_set_nvdimm(Object *obj, bool value, Error **errp)
+{
+    PCMachineState *pcms = PC_MACHINE(obj);
+
+    pcms->nvdimm = value;
+}
+
 static void pc_machine_initfn(Object *obj)
 {
     PCMachineState *pcms = PC_MACHINE(obj);
@@ -1916,6 +1930,11 @@ static void pc_machine_initfn(Object *obj)
     object_property_add_bool(obj, PC_MACHINE_ENFORCE_ALIGNED_DIMM,
                              pc_machine_get_aligned_dimm,
                              NULL, &error_abort);
+
+    /* nvdimm is disabled on default. */
+    pcms->nvdimm = false;
+    object_property_add_bool(obj, PC_MACHINE_NVDIMM, pc_machine_get_nvdimm,
+                             pc_machine_set_nvdimm, &error_abort);
 }
 
 static void pc_machine_reset(void)

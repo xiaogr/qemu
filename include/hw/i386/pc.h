@@ -40,6 +40,7 @@ struct PCMachineState {
     OnOffAuto vmport;
     OnOffAuto smm;
     bool enforce_aligned_dimm;
+    bool nvdimm;
     ram_addr_t below_4g_mem_size, above_4g_mem_size;
 };
 
@@ -49,6 +50,7 @@ struct PCMachineState {
 #define PC_MACHINE_VMPORT           "vmport"
 #define PC_MACHINE_SMM              "smm"
 #define PC_MACHINE_ENFORCE_ALIGNED_DIMM "enforce-aligned-dimm"
+#define PC_MACHINE_NVDIMM           "nvdimm"
 
 /**
  * PCMachineClass:
