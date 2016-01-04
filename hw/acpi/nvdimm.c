@@ -28,6 +28,7 @@
 
 #include "hw/acpi/acpi.h"
 #include "hw/acpi/aml-build.h"
+#include "hw/acpi/bios-linker-loader.h"
 #include "hw/nvram/fw_cfg.h"
 #include "hw/mem/nvdimm.h"
 
@@ -402,7 +403,8 @@ void nvdimm_init_acpi_state(AcpiNVDIMMState *state, MemoryRegion *io,
                     state->dsm_mem->len);
 }
 
-#define NVDIMM_COMMON_DSM      "NCAL"
+#define NVDIMM_GET_DSM_MEM      "MEMA"
+#define NVDIMM_COMMON_DSM       "NCAL"
 
 static void nvdimm_build_common_dsm(Aml *dev)
 {
@@ -468,7 +470,8 @@ static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
                               GArray *table_data, GArray *linker,
                               uint8_t revision)
 {
-    Aml *ssdt, *sb_scope, *dev;
+    Aml *ssdt, *sb_scope, *dev, *method;
+    int offset;
 
     acpi_add_table(table_offsets, table_data);
 
@@ -499,9 +502,26 @@ static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
 
     aml_append(sb_scope, dev);
 
+    /*
+     * leave it at the end of ssdt so that we can conveniently get the
+     * offset of int64 object returned by the function which will be
+     * patched with the real address of the dsm memory by BIOS.
+     */
+    method = aml_method(NVDIMM_GET_DSM_MEM, 0, AML_NOTSERIALIZED);
+    aml_append(method, aml_return(aml_int64(0x0)));
+    aml_append(sb_scope, method);
     aml_append(ssdt, sb_scope);
     /* copy AML table into ACPI tables blob and patch header there */
     g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
+
+    offset = table_data->len - 8;
+
+    bios_linker_loader_alloc(linker, NVDIMM_DSM_MEM_FILE, TARGET_PAGE_SIZE,
+                             false /* high memory */);
+    bios_linker_loader_add_pointer(linker, ACPI_BUILD_TABLE_FILE,
+                                   NVDIMM_DSM_MEM_FILE, table_data,
+                                   table_data->data + offset,
+                                   sizeof(uint64_t));
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - ssdt->buf->len),
         "SSDT", ssdt->buf->len, revision, "NVDIMM");

@@ -394,6 +394,18 @@ Aml *aml_int(const uint64_t val)
 }
 
 /*
+ * ACPI 1.0b: 16.2.3 Data Objects Encoding:
+ * encode: QWordConst
+ */
+Aml *aml_int64(const uint64_t val)
+{
+    Aml *var = aml_alloc();
+    build_append_byte(var->buf, 0x0E); /* QWordPrefix */
+    build_append_int_noprefix(var->buf, val, 8);
+    return var;
+}
+
+/*
  * helper to construct NameString, which returns Aml object
  * for using with aml_append or other aml_* terms
  */
