@@ -1139,7 +1139,7 @@ build_ssdt(GArray *table_data, GArray *linker,
         aml_append(dev, aml_name_decl("_CRS", crs));
 
         aml_append(dev, aml_operation_region("PEOR", AML_SYSTEM_IO,
-                                              misc->pvpanic_port, 1));
+                                              aml_int(misc->pvpanic_port), 1));
         field = aml_field("PEOR", AML_BYTE_ACC, AML_NOLOCK, AML_PRESERVE);
         aml_append(field, aml_named_field("PEPT", 8));
         aml_append(dev, field);
@@ -1179,7 +1179,8 @@ build_ssdt(GArray *table_data, GArray *linker,
         aml_append(sb_scope, dev);
         /* declare CPU hotplug MMIO region and PRS field to access it */
         aml_append(sb_scope, aml_operation_region(
-            "PRST", AML_SYSTEM_IO, pm->cpu_hp_io_base, pm->cpu_hp_io_len));
+            "PRST", AML_SYSTEM_IO, aml_int(pm->cpu_hp_io_base),
+            pm->cpu_hp_io_len));
         field = aml_field("PRST", AML_BYTE_ACC, AML_NOLOCK, AML_PRESERVE);
         aml_append(field, aml_named_field("PRS", 256));
         aml_append(sb_scope, field);
@@ -1251,7 +1252,7 @@ build_ssdt(GArray *table_data, GArray *linker,
 
         aml_append(scope, aml_operation_region(
             stringify(MEMORY_HOTPLUG_IO_REGION), AML_SYSTEM_IO,
-            pm->mem_hp_io_base, pm->mem_hp_io_len)
+            aml_int(pm->mem_hp_io_base), pm->mem_hp_io_len)
         );
 
         field = aml_field(stringify(MEMORY_HOTPLUG_IO_REGION), AML_DWORD_ACC,
