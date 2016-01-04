@@ -25,6 +25,14 @@
 
 #include "hw/mem/pc-dimm.h"
 
+#define NVDIMM_DEBUG 0
+#define nvdimm_debug(fmt, ...)                                \
+    do {                                                      \
+        if (NVDIMM_DEBUG) {                                   \
+            fprintf(stderr, "nvdimm: " fmt, ## __VA_ARGS__);  \
+        }                                                     \
+    } while (0)
+
 #define TYPE_NVDIMM             "nvdimm"
 
 #define NVDIMM_DSM_MEM_FILE     "etc/acpi/nvdimm-mem"
@@ -38,12 +46,21 @@
  * @is_enabled: detect if NVDIMM support is enabled.
  *
  * @dsm_mem: the data of the fw_cfg file NVDIMM_DSM_MEM_FILE.
+ *
+ * The dsm memory is allocated by BIOS and patched into ACPI binary code.
+ * @low_dsm_mem_addr: the low 32 bits of DSM memory.
+ * @high_dsm_mem_addr: the high 32 bits of DSM memory.
+ *
  * @io_mr: the IO region used by OSPM to transfer control to QEMU.
  */
 struct AcpiNVDIMMState {
     bool is_enabled;
 
     GArray *dsm_mem;
+
+    uint32_t low_dsm_mem_addr;
+    uint32_t high_dsm_mem_addr;
+
     MemoryRegion io_mr;
 };
 typedef struct AcpiNVDIMMState AcpiNVDIMMState;

@@ -390,12 +390,80 @@ typedef struct NvdimmDsmOut NvdimmDsmOut;
 static uint64_t
 nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 {
+    fprintf(stderr, "BUG: we never read _DSM IO Port.\n");
     return 0;
 }
 
 static void
 nvdimm_dsm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
+    AcpiNVDIMMState *state = opaque;
+    NvdimmDsmIn *in;
+    hwaddr dsm_mem_addr;
+    GArray *out;
+    uint32_t buf_size;
+
+    nvdimm_debug("write address %#lx value %#lx.\n", addr, val);
+
+    if (size != sizeof(uint32_t)) {
+        fprintf(stderr, "BUG: invalid IO bit width %#x.\n", size);
+        return;
+    }
+
+    switch (addr) {
+    case 0:
+        state->low_dsm_mem_addr = val;
+        return;
+    case sizeof(uint32_t):
+        state->high_dsm_mem_addr = val;
+        break;
+    default:
+        fprintf(stderr, "BUG: IO access address %#lx is not dword"
+                " aligned.\n", addr);
+        return;
+    };
+
+    dsm_mem_addr = state->low_dsm_mem_addr;
+    dsm_mem_addr |= (hwaddr)state->high_dsm_mem_addr << (sizeof(uint32_t) *
+                                                        BITS_PER_BYTE);
+    nvdimm_debug("dsm address %#lx\n", dsm_mem_addr);
+
+    /*
+     * The DSM memory is mapped to guest address space so an evil guest
+     * can change its content while we are doing DSM emulation. Avoid
+     * this by copying DSM memory to QEMU local memory.
+     */
+    in = g_malloc(TARGET_PAGE_SIZE);
+    cpu_physical_memory_read(dsm_mem_addr, in, TARGET_PAGE_SIZE);
+
+    le32_to_cpus(&in->revision);
+    le32_to_cpus(&in->function);
+    le32_to_cpus(&in->handle);
+
+    nvdimm_debug("Revision %#x Handler %#x Function %#x.\n", in->revision,
+                 in->handle, in->function);
+
+    out = g_array_new(false, true /* clear */, 1);
+
+    /*
+     * function 0 is called to inquire what functions are supported by
+     * OSPM
+     */
+    if (in->function == 0) {
+        build_append_int_noprefix(out, 0 /* No function Supported */,
+                                  sizeof(uint8_t));
+    } else {
+        /* No function is supported yet. */
+        build_append_int_noprefix(out, 1 /* Not Supported */,
+                                  sizeof(uint8_t));
+    }
+
+    buf_size = cpu_to_le32(out->len);
+    cpu_physical_memory_write(dsm_mem_addr, &buf_size, sizeof(buf_size));
+    cpu_physical_memory_write(dsm_mem_addr + sizeof(buf_size), out->data,
+                              out->len);
+    g_free(in);
+    g_array_free(out, true);
 }
 
 static const MemoryRegionOps nvdimm_dsm_ops = {
@@ -405,6 +473,17 @@ static const MemoryRegionOps nvdimm_dsm_ops = {
     .valid = {
         .min_access_size = 4,
         .max_access_size = 4,
+    },
+};
+
+static const VMStateDescription nvdimm_acpi_vmstate = {
+    .name = "nvdimm_acpi_vmstate",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(low_dsm_mem_addr, AcpiNVDIMMState),
+        VMSTATE_UINT32(high_dsm_mem_addr, AcpiNVDIMMState),
+        VMSTATE_END_OF_LIST()
     },
 };
 
@@ -419,6 +498,8 @@ void nvdimm_init_acpi_state(AcpiNVDIMMState *state, MemoryRegion *io,
     acpi_data_push(state->dsm_mem, TARGET_PAGE_SIZE);
     fw_cfg_add_file(fw_cfg, NVDIMM_DSM_MEM_FILE, state->dsm_mem->data,
                     state->dsm_mem->len);
+
+    vmstate_register(NULL, 0, &nvdimm_acpi_vmstate, state);
 }
 
 #define NVDIMM_GET_DSM_MEM      "MEMA"
@@ -430,7 +511,7 @@ static void nvdimm_build_common_dsm(Aml *dev)
     Aml *result_size, *dsm_mem;
     uint8_t byte_list[1];
 
-    method = aml_method(NVDIMM_COMMON_DSM, 4, AML_NOTSERIALIZED);
+    method = aml_method(NVDIMM_COMMON_DSM, 4, AML_SERIALIZED);
     function = aml_arg(2);
     dsm_mem = aml_arg(3);
 
