@@ -28,5 +28,5 @@
 #define TYPE_NVDIMM      "nvdimm"
 
 void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
-                       GArray *linker);
+                       GArray *linker, uint8_t revision);
 #endif

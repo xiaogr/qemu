@@ -148,6 +148,8 @@ typedef struct PcPciInfo {
 #define ACPI_PM_PROP_GPE0_BLK_LEN "gpe0_blk_len"
 #define ACPI_PM_PROP_TCO_ENABLED "enable_tco"
 
+#define ACPI_DSDT_REVISION "dsdt_revision"
+
 struct PcGuestInfo {
     bool isapc_ram_fw;
     hwaddr ram_size, ram_size_below_4g;
@@ -353,7 +355,17 @@ int e820_get_num_entries(void);
 bool e820_get_entry(int, uint32_t, uint64_t *, uint64_t *);
 
 #define PC_COMPAT_2_5 \
-    HW_COMPAT_2_5
+    HW_COMPAT_2_5 \
+    {\
+        .driver   = "PIIX4_PM",\
+        .property = ACPI_DSDT_REVISION,\
+        .value    = stringify(1),\
+    },\
+    {\
+        .driver   = "ICH9-LPC",\
+        .property = ACPI_DSDT_REVISION,\
+        .value    = stringify(1),\
+    },
 
 #define PC_COMPAT_2_4 \
     PC_COMPAT_2_5 \

@@ -430,7 +430,8 @@ static void nvdimm_build_nvdimm_devices(GSList *device_list, Aml *root_dev)
 }
 
 static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
-                              GArray *table_data, GArray *linker)
+                              GArray *table_data, GArray *linker,
+                              uint8_t revision)
 {
     Aml *ssdt, *sb_scope, *dev;
 
@@ -468,12 +469,12 @@ static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
     g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - ssdt->buf->len),
-        "SSDT", ssdt->buf->len, 1, "NVDIMM");
+        "SSDT", ssdt->buf->len, revision, "NVDIMM");
     free_aml_allocator();
 }
 
 void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
-                       GArray *linker)
+                       GArray *linker, uint8_t revision)
 {
     GSList *device_list;
 
@@ -483,6 +484,7 @@ void nvdimm_build_acpi(GArray *table_offsets, GArray *table_data,
         return;
     }
     nvdimm_build_nfit(device_list, table_offsets, table_data, linker);
-    nvdimm_build_ssdt(device_list, table_offsets, table_data, linker);
+    nvdimm_build_ssdt(device_list, table_offsets, table_data, linker,
+                      revision);
     g_slist_free(device_list);
 }

@@ -95,6 +95,7 @@ typedef struct AcpiPmInfo {
     uint16_t sci_int;
     uint8_t acpi_enable_cmd;
     uint8_t acpi_disable_cmd;
+    uint8_t dsdt_revision;
     uint32_t gpe0_blk;
     uint32_t gpe0_blk_len;
     uint32_t io_base;
@@ -211,6 +212,13 @@ static void acpi_get_pm_info(AcpiPmInfo *pm)
         pm->s4_val = qint_get_int(qobject_to_qint(o));
     } else {
         pm->s4_val = false;
+    }
+    qobject_decref(o);
+    o = object_property_get_qobject(obj, ACPI_DSDT_REVISION, NULL);
+    if (o) {
+        pm->dsdt_revision = qint_get_int(qobject_to_qint(o));
+    } else {
+        pm->dsdt_revision = 0x1;
     }
     qobject_decref(o);
 
@@ -932,7 +940,7 @@ static Aml *build_crs(PCIHostState *host,
 static void
 build_ssdt(GArray *table_data, GArray *linker,
            AcpiCpuInfo *cpu, AcpiPmInfo *pm, AcpiMiscInfo *misc,
-           PcPciInfo *pci, PcGuestInfo *guest_info)
+           PcPciInfo *pci, PcGuestInfo *guest_info, uint8_t revision)
 {
     MachineState *machine = MACHINE(qdev_get_machine());
     uint32_t nr_mem = machine->ram_slots;
@@ -1378,7 +1386,7 @@ build_ssdt(GArray *table_data, GArray *linker,
     g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - ssdt->buf->len),
-        "SSDT", ssdt->buf->len, 1, NULL);
+        "SSDT", ssdt->buf->len, revision, NULL);
     free_aml_allocator();
 }
 
@@ -1605,7 +1613,8 @@ build_dmar_q35(GArray *table_data, GArray *linker)
 }
 
 static void
-build_dsdt(GArray *table_data, GArray *linker, AcpiMiscInfo *misc)
+build_dsdt(GArray *table_data, GArray *linker, AcpiMiscInfo *misc,
+           uint8_t revision)
 {
     AcpiTableHeader *dsdt;
 
@@ -1616,7 +1625,7 @@ build_dsdt(GArray *table_data, GArray *linker, AcpiMiscInfo *misc)
 
     memset(dsdt, 0, sizeof *dsdt);
     build_header(linker, table_data, dsdt, "DSDT",
-                 misc->dsdt_size, 1, NULL);
+                 misc->dsdt_size, revision, NULL);
 }
 
 static GArray *
@@ -1732,7 +1741,7 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
 
     /* DSDT is pointed to by FADT */
     dsdt = tables_blob->len;
-    build_dsdt(tables_blob, tables->linker, &misc);
+    build_dsdt(tables_blob, tables->linker, &misc, pm.dsdt_revision);
 
     /* Count the size of the DSDT and SSDT, we will need it for legacy
      * sizing of ACPI tables.
@@ -1746,7 +1755,7 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
     ssdt = tables_blob->len;
     acpi_add_table(table_offsets, tables_blob);
     build_ssdt(tables_blob, tables->linker, &cpu, &pm, &misc, &pci,
-               guest_info);
+               guest_info, pm.dsdt_revision);
     aml_len += tables_blob->len - ssdt;
 
     acpi_add_table(table_offsets, tables_blob);
@@ -1779,7 +1788,8 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
     }
 
     if (acpi_has_nvdimm()) {
-        nvdimm_build_acpi(table_offsets, tables_blob, tables->linker);
+        nvdimm_build_acpi(table_offsets, tables_blob, tables->linker,
+                          pm.dsdt_revision);
     }
 
     /* Add tables supplied by user (if any) */

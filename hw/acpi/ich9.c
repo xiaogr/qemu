@@ -400,6 +400,33 @@ static void ich9_pm_set_enable_tco(Object *obj, bool value, Error **errp)
     s->pm.enable_tco = value;
 }
 
+static void ich9_pm_get_dsdt_revision(Object *obj, Visitor *v,
+                                      void *opaque, const char *name,
+                                      Error **errp)
+{
+    ICH9LPCPMRegs *pm = opaque;
+    uint8_t value = pm->dsdt_revision;
+
+    visit_type_uint8(v, &value, name, errp);
+}
+
+static void ich9_pm_set_dsdt_revision(Object *obj, Visitor *v,
+                                      void *opaque, const char *name,
+                                      Error **errp)
+{
+    ICH9LPCPMRegs *pm = opaque;
+    Error *local_err = NULL;
+    uint8_t value;
+
+    visit_type_uint8(v, &value, name, &local_err);
+    if (local_err) {
+        goto out;
+    }
+    pm->dsdt_revision = value;
+out:
+    error_propagate(errp, local_err);
+}
+
 void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
 {
     static const uint32_t gpe0_len = ICH9_PMIO_GPE0_LEN;
@@ -407,6 +434,7 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
     pm->disable_s3 = 0;
     pm->disable_s4 = 0;
     pm->s4_val = 2;
+    pm->dsdt_revision = 2;
 
     object_property_add_uint32_ptr(obj, ACPI_PM_PROP_PM_IO_BASE,
                                    &pm->pm_io_base, errp);
@@ -435,6 +463,10 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
                              ich9_pm_get_enable_tco,
                              ich9_pm_set_enable_tco,
                              NULL);
+    object_property_add(obj, ACPI_DSDT_REVISION, "uint8",
+                        ich9_pm_get_dsdt_revision,
+                        ich9_pm_set_dsdt_revision,
+                        NULL, pm, NULL);
 }
 
 void ich9_pm_device_plug_cb(ICH9LPCPMRegs *pm, DeviceState *dev, Error **errp)

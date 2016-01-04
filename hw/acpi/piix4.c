@@ -83,6 +83,8 @@ typedef struct PIIX4PMState {
     uint8_t disable_s4;
     uint8_t s4_val;
 
+    uint8_t dsdt_revision;
+
     AcpiCpuHotplug gpe_cpu;
 
     MemHotplugState acpi_memory_hotplug;
@@ -588,6 +590,7 @@ static Property piix4_pm_properties[] = {
     DEFINE_PROP_UINT8(ACPI_PM_PROP_S3_DISABLED, PIIX4PMState, disable_s3, 0),
     DEFINE_PROP_UINT8(ACPI_PM_PROP_S4_DISABLED, PIIX4PMState, disable_s4, 0),
     DEFINE_PROP_UINT8(ACPI_PM_PROP_S4_VAL, PIIX4PMState, s4_val, 2),
+    DEFINE_PROP_UINT8(ACPI_DSDT_REVISION, PIIX4PMState, dsdt_revision, 2),
     DEFINE_PROP_BOOL("acpi-pci-hotplug-with-bridge-support", PIIX4PMState,
                      use_acpi_pci_hotplug, true),
     DEFINE_PROP_BOOL("memory-hotplug-support", PIIX4PMState,
