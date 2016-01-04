@@ -281,6 +281,11 @@ static void pc_init1(MachineState *machine,
     if (pcmc->pci_enabled) {
         pc_pci_device_init(pci_bus);
     }
+
+    if (guest_info->has_nvdimm) {
+        nvdimm_init_acpi_state(&pcms->acpi_nvdimm_state, system_io,
+                               guest_info->fw_cfg, OBJECT(pcms));
+    }
 }
 
 /* Looking for a pc_compat_2_4() function? It doesn't exist.
