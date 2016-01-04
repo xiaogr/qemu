@@ -369,6 +369,24 @@ static void nvdimm_build_nfit(GSList *device_list, GArray *table_offsets,
     g_array_free(structures, true);
 }
 
+struct NvdimmDsmIn {
+    uint32_t handle;
+    uint32_t revision;
+    uint32_t function;
+   /* the remaining size in the page is used by arg3. */
+    union {
+        uint8_t arg3[0];
+    };
+} QEMU_PACKED;
+typedef struct NvdimmDsmIn NvdimmDsmIn;
+
+struct NvdimmDsmOut {
+    /* the size of buffer filled by QEMU. */
+    uint32_t len;
+    uint8_t data[0];
+} QEMU_PACKED;
+typedef struct NvdimmDsmOut NvdimmDsmOut;
+
 static uint64_t
 nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -408,11 +426,21 @@ void nvdimm_init_acpi_state(AcpiNVDIMMState *state, MemoryRegion *io,
 
 static void nvdimm_build_common_dsm(Aml *dev)
 {
-    Aml *method, *ifctx, *function;
+    Aml *method, *ifctx, *function, *unpatched, *field, *high_dsm_mem;
+    Aml *result_size, *dsm_mem;
     uint8_t byte_list[1];
 
     method = aml_method(NVDIMM_COMMON_DSM, 4, AML_NOTSERIALIZED);
     function = aml_arg(2);
+    dsm_mem = aml_arg(3);
+
+    aml_append(method, aml_store(aml_call0(NVDIMM_GET_DSM_MEM), dsm_mem));
+
+    /*
+     * do not support any method if DSM memory address has not been
+     * patched.
+     */
+    unpatched = aml_if(aml_equal(dsm_mem, aml_int64(0x0)));
 
     /*
      * function 0 is called to inquire what functions are supported by
@@ -421,12 +449,102 @@ static void nvdimm_build_common_dsm(Aml *dev)
     ifctx = aml_if(aml_equal(function, aml_int(0)));
     byte_list[0] = 0 /* No function Supported */;
     aml_append(ifctx, aml_return(aml_buffer(1, byte_list)));
-    aml_append(method, ifctx);
+    aml_append(unpatched, ifctx);
 
     /* No function is supported yet. */
     byte_list[0] = 1 /* Not Supported */;
-    aml_append(method, aml_return(aml_buffer(1, byte_list)));
+    aml_append(unpatched, aml_return(aml_buffer(1, byte_list)));
+    aml_append(method, unpatched);
 
+    /* map DSM memory and IO into ACPI namespace. */
+    aml_append(method, aml_operation_region("NPIO", AML_SYSTEM_IO,
+               aml_int(NVDIMM_ACPI_IO_BASE), NVDIMM_ACPI_IO_LEN));
+    aml_append(method, aml_operation_region("NRAM", AML_SYSTEM_MEMORY,
+                                            dsm_mem, TARGET_PAGE_SIZE));
+
+    /*
+     * DSM notifier:
+     * LNTF: write the low 32 bits of DSM memory.
+     * HNTF: write the high 32 bits of DSM memory and notify QEMU to
+     *       emulate the access.
+     *
+     * They are IO ports so that accessing them will cause VM-exit, the
+     * control will be transferred to QEMU.
+     */
+    field = aml_field("NPIO", AML_DWORD_ACC, AML_NOLOCK, AML_PRESERVE);
+    aml_append(field, aml_named_field("LNTF",
+               sizeof(uint32_t) * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("HNTF",
+               sizeof(uint32_t) * BITS_PER_BYTE));
+    aml_append(method, field);
+
+    /*
+     * DSM input:
+     * @HDLE: store device's handle, it's zero if the _DSM call happens
+     *        on NVDIMM Root Device.
+     * @REVS: store the Arg1 of _DSM call.
+     * @FUNC: store the Arg2 of _DSM call.
+     * @ARG3: store the Arg3 of _DSM call.
+     *
+     * They are RAM mapping on host so that these accesses never cause
+     * VM-EXIT.
+     */
+    field = aml_field("NRAM", AML_DWORD_ACC, AML_NOLOCK, AML_PRESERVE);
+    aml_append(field, aml_named_field("HDLE",
+               sizeof(typeof_field(NvdimmDsmIn, handle)) * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("REVS",
+               sizeof(typeof_field(NvdimmDsmIn, revision)) * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("FUNC",
+               sizeof(typeof_field(NvdimmDsmIn, function)) * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("ARG3",
+               (TARGET_PAGE_SIZE - offsetof(NvdimmDsmIn, arg3)) *
+                     BITS_PER_BYTE));
+    aml_append(method, field);
+
+    /*
+     * DSM output:
+     * @RLEN: the size of the buffer filled by QEMU.
+     * @ODAT: the buffer QEMU uses to store the result.
+     *
+     * Since the page is reused by both input and out, the input data
+     * will be lost after storing new result into @ODAT.
+    */
+    field = aml_field("NRAM", AML_DWORD_ACC, AML_NOLOCK, AML_PRESERVE);
+    aml_append(field, aml_named_field("RLEN",
+               sizeof(typeof_field(NvdimmDsmOut, len)) * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("ODAT",
+               (TARGET_PAGE_SIZE - offsetof(NvdimmDsmOut, data)) *
+                     BITS_PER_BYTE));
+    aml_append(method, field);
+
+    /*
+     * Currently no function is supported for both root device and NVDIMM
+     * devices, let's temporarily set handle to 0x0 at this time.
+     */
+    aml_append(method, aml_store(aml_int(0x0), aml_name("HDLE")));
+    aml_append(method, aml_store(aml_arg(1), aml_name("REVS")));
+    aml_append(method, aml_store(aml_arg(2), aml_name("FUNC")));
+
+    /*
+     * tell QEMU about the real address of DSM memory, then QEMU begins
+     * to emulate the method and fills the result to DSM memory.
+     */
+    aml_append(method, aml_store(dsm_mem, aml_name("LNTF")));
+    high_dsm_mem = aml_shiftright(dsm_mem,
+                                  aml_int(sizeof(uint32_t) * BITS_PER_BYTE),
+                                  NULL);
+    aml_append(method, aml_store(high_dsm_mem, aml_name("HNTF")));
+
+    result_size = aml_local(1);
+    aml_append(method, aml_store(aml_name("RLEN"), result_size));
+    aml_append(method, aml_store(aml_shiftleft(result_size, aml_int(3)),
+                                 result_size));
+    aml_append(method, aml_create_field(aml_name("ODAT"), aml_int(0),
+                                        result_size, "OBUF"));
+    aml_append(method, aml_name_decl("ZBUF", aml_buffer(0, NULL)));
+    aml_append(method, aml_concatenate(aml_name("ZBUF"), aml_name("OBUF"),
+                                       aml_arg(6)));
+    aml_append(method, aml_return(aml_arg(6)));
     aml_append(dev, method);
 }
 

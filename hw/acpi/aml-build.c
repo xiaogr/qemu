@@ -1013,6 +1013,19 @@ Aml *create_field_common(int opcode, Aml *srcbuf, Aml *index, const char *name)
     return var;
 }
 
+/* ACPI 1.0b: 16.2.5.2 Named Objects Encoding: DefCreateField */
+Aml *aml_create_field(Aml *srcbuf, Aml *index, Aml *len, const char *name)
+{
+    Aml *var = aml_alloc();
+    build_append_byte(var->buf, 0x5B); /* ExtOpPrefix */
+    build_append_byte(var->buf, 0x13); /* CreateFieldOp */
+    aml_append(var, srcbuf);
+    aml_append(var, index);
+    aml_append(var, len);
+    build_append_namestring(var->buf, "%s", name);
+    return var;
+}
+
 /* ACPI 1.0b: 16.2.5.2 Named Objects Encoding: DefCreateDWordField */
 Aml *aml_create_dword_field(Aml *srcbuf, Aml *index, const char *name)
 {
@@ -1436,6 +1449,20 @@ Aml *aml_alias(const char *source_object, const char *alias_object)
     Aml *var = aml_opcode(0x06 /* AliasOp */);
     aml_append(var, aml_name("%s", source_object));
     aml_append(var, aml_name("%s", alias_object));
+    return var;
+}
+
+/* ACPI 1.0b: 16.2.5.4 Type 2 Opcodes Encoding: DefConcat */
+Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target)
+{
+    Aml *var = aml_opcode(0x73 /* ConcatOp */);
+    aml_append(var, source1);
+    aml_append(var, source2);
+
+    if (target) {
+        aml_append(var, target);
+    }
+
     return var;
 }
 

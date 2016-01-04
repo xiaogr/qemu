@@ -344,6 +344,7 @@ Aml *aml_mutex(const char *name, uint8_t sync_level);
 Aml *aml_acquire(Aml *mutex, uint16_t timeout);
 Aml *aml_release(Aml *mutex);
 Aml *aml_alias(const char *source_object, const char *alias_object);
+Aml *aml_create_field(Aml *srcbuf, Aml *index, Aml *len, const char *name);
 Aml *aml_create_dword_field(Aml *srcbuf, Aml *index, const char *name);
 Aml *aml_create_qword_field(Aml *srcbuf, Aml *index, const char *name);
 Aml *aml_varpackage(uint32_t num_elements);
@@ -351,6 +352,7 @@ Aml *aml_touuid(const char *uuid);
 Aml *aml_unicode(const char *str);
 Aml *aml_derefof(Aml *arg);
 Aml *aml_sizeof(Aml *arg);
+Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
 
 void
 build_header(GArray *linker, GArray *table_data,
