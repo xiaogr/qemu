@@ -393,12 +393,56 @@ typedef struct NvdimmDsmOut NvdimmDsmOut;
 static uint64_t
 nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
 {
+    fprintf(stderr, "BUG: we never read _DSM IO Port.\n");
     return 0;
 }
 
 static void
 nvdimm_dsm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
+    NvdimmDsmIn *in;
+    GArray *out;
+    uint32_t buf_size;
+    hwaddr dsm_mem_addr = val;
+
+    nvdimm_debug("dsm memory address %#lx.\n", dsm_mem_addr);
+
+    /*
+     * The DSM memory is mapped to guest address space so an evil guest
+     * can change its content while we are doing DSM emulation. Avoid
+     * this by copying DSM memory to QEMU local memory.
+     */
+    in = g_malloc(TARGET_PAGE_SIZE);
+    cpu_physical_memory_read(dsm_mem_addr, in, TARGET_PAGE_SIZE);
+
+    le32_to_cpus(&in->revision);
+    le32_to_cpus(&in->function);
+    le32_to_cpus(&in->handle);
+
+    nvdimm_debug("Revision %#x Handler %#x Function %#x.\n", in->revision,
+                 in->handle, in->function);
+
+    out = g_array_new(false, true /* clear */, 1);
+
+    /*
+     * function 0 is called to inquire what functions are supported by
+     * OSPM
+     */
+    if (in->function == 0) {
+        build_append_int_noprefix(out, 0 /* No function Supported */,
+                                  sizeof(uint8_t));
+    } else {
+        /* No function is supported yet. */
+        build_append_int_noprefix(out, 1 /* Not Supported */,
+                                  sizeof(uint8_t));
+    }
+
+    buf_size = cpu_to_le32(out->len);
+    cpu_physical_memory_write(dsm_mem_addr, &buf_size, sizeof(buf_size));
+    cpu_physical_memory_write(dsm_mem_addr + sizeof(buf_size), out->data,
+                              out->len);
+    g_free(in);
+    g_array_free(out, true);
 }
 
 static const MemoryRegionOps nvdimm_dsm_ops = {
