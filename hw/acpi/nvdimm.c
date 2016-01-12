@@ -28,6 +28,7 @@
 
 #include "hw/acpi/acpi.h"
 #include "hw/acpi/aml-build.h"
+#include "hw/acpi/bios-linker-loader.h"
 #include "hw/nvram/fw_cfg.h"
 #include "hw/mem/nvdimm.h"
 
@@ -405,6 +406,7 @@ void nvdimm_init_acpi_state(AcpiNVDIMMState *state, MemoryRegion *io,
 }
 
 #define NVDIMM_COMMON_DSM      "NCAL"
+#define NVDIMM_ACPI_MEM_ADDR   "MEMA"
 
 static void nvdimm_build_common_dsm(Aml *dev)
 {
@@ -469,7 +471,9 @@ static void nvdimm_build_nvdimm_devices(GSList *device_list, Aml *root_dev)
 static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
                               GArray *table_data, GArray *linker)
 {
-    Aml *ssdt, *sb_scope, *dev;
+    Aml *ssdt, *sb_scope, *dev, *mem_addr;
+    uint32_t zero_offset = 0;
+    int offset;
 
     acpi_add_table(table_offsets, table_data);
 
@@ -500,9 +504,37 @@ static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
 
     aml_append(sb_scope, dev);
 
+    /*
+     * leave it at the end of ssdt so that we can conveniently get the
+     * offset of int32 object which will be patched with the real address
+     * of the dsm memory by BIOS.
+     *
+     * 0x32000000 is the magic number to let aml_int() create int32 object.
+     * It will be zeroed later to make bios_linker_loader_add_pointer()
+     * happy.
+     */
+    mem_addr = aml_name_decl(NVDIMM_ACPI_MEM_ADDR, aml_int(0x32000000));
+
+    aml_append(sb_scope, mem_addr);
     aml_append(ssdt, sb_scope);
     /* copy AML table into ACPI tables blob and patch header there */
     g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
+
+    offset = table_data->len - 4;
+
+    /*
+     * zero the last 4 bytes, i.e, it is the offset of
+     * NVDIMM_ACPI_MEM_ADDR object.
+     */
+    g_array_remove_range(table_data, offset, 4);
+    g_array_append_vals(table_data, &zero_offset, 4);
+
+    bios_linker_loader_alloc(linker, NVDIMM_DSM_MEM_FILE, TARGET_PAGE_SIZE,
+                             false /* high memory */);
+    bios_linker_loader_add_pointer(linker, ACPI_BUILD_TABLE_FILE,
+                                   NVDIMM_DSM_MEM_FILE, table_data,
+                                   table_data->data + offset,
+                                   sizeof(uint32_t));
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - ssdt->buf->len),
         "SSDT", ssdt->buf->len, 1, "NVDIMM");
