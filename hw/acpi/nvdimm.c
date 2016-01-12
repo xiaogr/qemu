@@ -566,6 +566,7 @@ static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
                               GArray *table_data, GArray *linker)
 {
     Aml *ssdt, *sb_scope, *dev, *field, *mem_addr;
+    Aml *min_addr, *max_addr, *mr32, *method, *crs;
     uint32_t zero_offset = 0;
     int offset;
 
@@ -590,6 +591,32 @@ static void nvdimm_build_ssdt(GSList *device_list, GArray *table_offsets,
      * root device.
      */
     aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0012")));
+
+    /*
+     * report the dsm memory so that OSPM could see that particular range is
+     * in use and be able to notice conflicts if it happens some day.
+     */
+    method = aml_method("_CRS", 0, AML_SERIALIZED);
+    crs = aml_resource_template();
+    aml_append(crs, aml_dword_memory(AML_POS_DECODE, AML_MIN_FIXED,
+                                     AML_MAX_FIXED, AML_CACHEABLE,
+                                     AML_READ_WRITE,
+                                     0, 0x0, 0xFFFFFFFE, 0,
+                                     TARGET_PAGE_SIZE));
+    aml_append(method, aml_name_decl("MR32", crs));
+    mr32 = aml_name("MR32");
+    aml_append(method, aml_create_dword_field(mr32, aml_int(10), "MIN"));
+    aml_append(method, aml_create_dword_field(mr32, aml_int(14), "MAX"));
+
+    min_addr = aml_name("MIN");
+    max_addr = aml_name("MAX");
+
+    aml_append(method, aml_store(aml_name(NVDIMM_ACPI_MEM_ADDR), min_addr));
+    aml_append(method, aml_add(min_addr, aml_int(TARGET_PAGE_SIZE),
+                               max_addr));
+    aml_append(method, aml_decrement(max_addr));
+    aml_append(method, aml_return(mr32));
+    aml_append(dev, method);
 
     /* map DSM memory and IO into ACPI namespace. */
     aml_append(dev, aml_operation_region("NPIO", AML_SYSTEM_IO,
