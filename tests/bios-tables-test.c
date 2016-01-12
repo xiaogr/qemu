@@ -157,6 +157,10 @@ static const char *iasl = stringify(CONFIG_IASL);
 static const char *iasl;
 #endif
 
+#define NVDIMM_PARAMS   " -m 128M,maxmem=5G,slots=2 "                   \
+                        "-object memory-backend-ram,id=mem1,size=128M " \
+                        "-device nvdimm,memdev=mem1"
+
 static void free_test_data(test_data *data)
 {
     AcpiSdtTable *temp;
@@ -823,7 +827,7 @@ static void test_acpi_piix4_tcg(void)
      */
     memset(&data, 0, sizeof(data));
     data.machine = MACHINE_PC;
-    test_acpi_one("-machine accel=tcg", &data);
+    test_acpi_one("-machine accel=tcg,nvdimm" NVDIMM_PARAMS, &data);
     free_test_data(&data);
 }
 
@@ -834,7 +838,8 @@ static void test_acpi_piix4_tcg_bridge(void)
     memset(&data, 0, sizeof(data));
     data.machine = MACHINE_PC;
     data.variant = ".bridge";
-    test_acpi_one("-machine accel=tcg -device pci-bridge,chassis_nr=1", &data);
+    test_acpi_one("-machine accel=tcg,nvdimm -device pci-bridge,chassis_nr=1"
+                  NVDIMM_PARAMS, &data);
     free_test_data(&data);
 }
 
@@ -844,7 +849,7 @@ static void test_acpi_q35_tcg(void)
 
     memset(&data, 0, sizeof(data));
     data.machine = MACHINE_Q35;
-    test_acpi_one("-machine q35,accel=tcg", &data);
+    test_acpi_one("-machine q35,accel=tcg,nvdimm" NVDIMM_PARAMS, &data);
     free_test_data(&data);
 }
 
@@ -855,8 +860,8 @@ static void test_acpi_q35_tcg_bridge(void)
     memset(&data, 0, sizeof(data));
     data.machine = MACHINE_Q35;
     data.variant = ".bridge";
-    test_acpi_one("-machine q35,accel=tcg -device pci-bridge,chassis_nr=1",
-                  &data);
+    test_acpi_one("-machine q35,accel=tcg,nvdimm "
+                  "-device pci-bridge,chassis_nr=1" NVDIMM_PARAMS, &data);
     free_test_data(&data);
 }
 
