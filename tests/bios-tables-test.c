@@ -18,6 +18,7 @@
 #include "libqtest.h"
 #include "qemu/compiler.h"
 #include "hw/acpi/acpi-defs.h"
+#include "hw/acpi/aml-build.h"
 #include "hw/smbios/smbios.h"
 #include "qemu/bitmap.h"
 
@@ -379,6 +380,33 @@ static void test_acpi_tables(test_data *data)
     }
 }
 
+static gchar *get_sdt_aml_file_name(test_data *data, AcpiSdtTable *sdt,
+                                    bool skip_variant)
+{
+    gchar *aml_file, *def_oem_table_id, *oem_table_id, *sig_oem;
+    uint32_t signature = cpu_to_le32(sdt->header.signature);
+    const char *ext = data->variant && !skip_variant ? data->variant : "";
+
+    def_oem_table_id = g_strdup_printf("%s%s", ACPI_BUILD_APPNAME4,
+                                       (gchar *)&signature);
+    oem_table_id = g_strndup((char *)sdt->header.oem_table_id,
+                             sizeof(sdt->header.oem_table_id));
+
+    if (strcmp(oem_table_id, def_oem_table_id)) {
+        sig_oem = g_strdup_printf("%.4s-%s", (gchar *)&signature,
+                                  oem_table_id);
+    } else {
+        sig_oem = g_strdup_printf("%.4s", (gchar *)&signature);
+    }
+
+    aml_file = g_strdup_printf("%s/%s/%s%s", data_dir, data->machine,
+                               sig_oem, ext);
+    g_free(sig_oem);
+    g_free(oem_table_id);
+    g_free(def_oem_table_id);
+    return aml_file;
+}
+
 static void dump_aml_files(test_data *data, bool rebuild)
 {
     AcpiSdtTable *sdt;
@@ -389,14 +417,11 @@ static void dump_aml_files(test_data *data, bool rebuild)
     int i;
 
     for (i = 0; i < data->tables->len; ++i) {
-        const char *ext = data->variant ? data->variant : "";
         sdt = &g_array_index(data->tables, AcpiSdtTable, i);
         g_assert(sdt->aml);
 
         if (rebuild) {
-            uint32_t signature = cpu_to_le32(sdt->header.signature);
-            aml_file = g_strdup_printf("%s/%s/%.4s%s", data_dir, data->machine,
-                                       (gchar *)&signature, ext);
+            aml_file = get_sdt_aml_file_name(data, sdt, false);
             fd = g_open(aml_file, O_WRONLY|O_TRUNC|O_CREAT,
                         S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
         } else {
@@ -508,22 +533,18 @@ static GArray *load_expected_aml(test_data *data)
     GArray *exp_tables = g_array_new(false, true, sizeof(AcpiSdtTable));
     for (i = 0; i < data->tables->len; ++i) {
         AcpiSdtTable exp_sdt;
-        uint32_t signature;
-        const char *ext = data->variant ? data->variant : "";
+        bool skip_variant = false;
 
         sdt = &g_array_index(data->tables, AcpiSdtTable, i);
 
         memset(&exp_sdt, 0, sizeof(exp_sdt));
         exp_sdt.header.signature = sdt->header.signature;
 
-        signature = cpu_to_le32(sdt->header.signature);
-
 try_again:
-        aml_file = g_strdup_printf("%s/%s/%.4s%s", data_dir, data->machine,
-                                   (gchar *)&signature, ext);
+        aml_file = get_sdt_aml_file_name(data, sdt, skip_variant);
         if (data->variant && !g_file_test(aml_file, G_FILE_TEST_EXISTS)) {
             g_free(aml_file);
-            ext = "";
+            skip_variant = true;
             goto try_again;
         }
         exp_sdt.aml_file = aml_file;
