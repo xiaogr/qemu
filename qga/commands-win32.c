@@ -59,6 +59,7 @@ static struct {
     .filehandles = QTAILQ_HEAD_INITIALIZER(guest_file_state.filehandles),
 };
 
+#define FILE_GENERIC_APPEND (FILE_GENERIC_WRITE & ~FILE_WRITE_DATA)
 
 typedef struct OpenFlags {
     const char *forms;
@@ -66,20 +67,20 @@ typedef struct OpenFlags {
     DWORD creation_disposition;
 } OpenFlags;
 static OpenFlags guest_file_open_modes[] = {
-    {"r",   GENERIC_READ,               OPEN_EXISTING},
-    {"rb",  GENERIC_READ,               OPEN_EXISTING},
-    {"w",   GENERIC_WRITE,              CREATE_ALWAYS},
-    {"wb",  GENERIC_WRITE,              CREATE_ALWAYS},
-    {"a",   GENERIC_WRITE,              OPEN_ALWAYS  },
-    {"r+",  GENERIC_WRITE|GENERIC_READ, OPEN_EXISTING},
-    {"rb+", GENERIC_WRITE|GENERIC_READ, OPEN_EXISTING},
-    {"r+b", GENERIC_WRITE|GENERIC_READ, OPEN_EXISTING},
-    {"w+",  GENERIC_WRITE|GENERIC_READ, CREATE_ALWAYS},
-    {"wb+", GENERIC_WRITE|GENERIC_READ, CREATE_ALWAYS},
-    {"w+b", GENERIC_WRITE|GENERIC_READ, CREATE_ALWAYS},
-    {"a+",  GENERIC_WRITE|GENERIC_READ, OPEN_ALWAYS  },
-    {"ab+", GENERIC_WRITE|GENERIC_READ, OPEN_ALWAYS  },
-    {"a+b", GENERIC_WRITE|GENERIC_READ, OPEN_ALWAYS  }
+    {"r",   GENERIC_READ,                     OPEN_EXISTING},
+    {"rb",  GENERIC_READ,                     OPEN_EXISTING},
+    {"w",   GENERIC_WRITE,                    CREATE_ALWAYS},
+    {"wb",  GENERIC_WRITE,                    CREATE_ALWAYS},
+    {"a",   FILE_GENERIC_APPEND,              OPEN_ALWAYS  },
+    {"r+",  GENERIC_WRITE|GENERIC_READ,       OPEN_EXISTING},
+    {"rb+", GENERIC_WRITE|GENERIC_READ,       OPEN_EXISTING},
+    {"r+b", GENERIC_WRITE|GENERIC_READ,       OPEN_EXISTING},
+    {"w+",  GENERIC_WRITE|GENERIC_READ,       CREATE_ALWAYS},
+    {"wb+", GENERIC_WRITE|GENERIC_READ,       CREATE_ALWAYS},
+    {"w+b", GENERIC_WRITE|GENERIC_READ,       CREATE_ALWAYS},
+    {"a+",  FILE_GENERIC_APPEND|GENERIC_READ, OPEN_ALWAYS  },
+    {"ab+", FILE_GENERIC_APPEND|GENERIC_READ, OPEN_ALWAYS  },
+    {"a+b", FILE_GENERIC_APPEND|GENERIC_READ, OPEN_ALWAYS  }
 };
 
 static OpenFlags *find_open_flag(const char *mode_str)
@@ -128,6 +129,28 @@ static GuestFileHandle *guest_file_handle_find(int64_t id, Error **errp)
     return NULL;
 }
 
+static void handle_set_nonblocking(HANDLE fh)
+{
+    DWORD file_type, pipe_state;
+    file_type = GetFileType(fh);
+    if (file_type != FILE_TYPE_PIPE) {
+        return;
+    }
+    /* If file_type == FILE_TYPE_PIPE, according to MSDN
+     * the specified file is socket or named pipe */
+    if (!GetNamedPipeHandleState(fh, &pipe_state, NULL,
+                                 NULL, NULL, NULL, 0)) {
+        return;
+    }
+    /* The fd is named pipe fd */
+    if (pipe_state & PIPE_NOWAIT) {
+        return;
+    }
+
+    pipe_state |= PIPE_NOWAIT;
+    SetNamedPipeHandleState(fh, &pipe_state, NULL, NULL);
+}
+
 int64_t qmp_guest_file_open(const char *path, bool has_mode,
                             const char *mode, Error **errp)
 {
@@ -158,9 +181,14 @@ int64_t qmp_guest_file_open(const char *path, bool has_mode,
         return -1;
     }
 
+    /* set fd non-blocking to avoid common use cases (like reading from a
+     * named pipe) from hanging the agent
+     */
+    handle_set_nonblocking(fh);
+
     fd = guest_file_handle_add(fh, errp);
     if (fd < 0) {
-        CloseHandle(&fh);
+        CloseHandle(fh);
         error_setg(errp, "failed to add handle to qmp handle table");
         return -1;
     }
@@ -354,7 +382,7 @@ done:
 }
 
 GuestFileSeek *qmp_guest_file_seek(int64_t handle, int64_t offset,
-                                   int64_t whence, Error **errp)
+                                   int64_t whence_code, Error **errp)
 {
     GuestFileHandle *gfh;
     GuestFileSeek *seek_data;
@@ -362,8 +390,26 @@ GuestFileSeek *qmp_guest_file_seek(int64_t handle, int64_t offset,
     LARGE_INTEGER new_pos, off_pos;
     off_pos.QuadPart = offset;
     BOOL res;
+    int whence;
+
     gfh = guest_file_handle_find(handle, errp);
     if (!gfh) {
+        return NULL;
+    }
+
+    /* We stupidly exposed 'whence':'int' in our qapi */
+    switch (whence_code) {
+    case QGA_SEEK_SET:
+        whence = SEEK_SET;
+        break;
+    case QGA_SEEK_CUR:
+        whence = SEEK_CUR;
+        break;
+    case QGA_SEEK_END:
+        whence = SEEK_END;
+        break;
+    default:
+        error_setg(errp, "invalid whence code %"PRId64, whence_code);
         return NULL;
     }
 

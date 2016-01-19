@@ -27,6 +27,7 @@
 #include "qapi/opts-visitor.h"
 #include "qapi/qmp/qerror.h"
 #include "qapi/string-output-visitor.h"
+#include "qapi/util.h"
 #include "qapi-visit.h"
 #include "ui/console.h"
 #include "block/qapi.h"
@@ -521,6 +522,7 @@ void hmp_info_blockstats(Monitor *mon, const QDict *qdict)
                        " flush_total_time_ns=%" PRId64
                        " rd_merged=%" PRId64
                        " wr_merged=%" PRId64
+                       " idle_time_ns=%" PRId64
                        "\n",
                        stats->value->stats->rd_bytes,
                        stats->value->stats->wr_bytes,
@@ -531,7 +533,8 @@ void hmp_info_blockstats(Monitor *mon, const QDict *qdict)
                        stats->value->stats->rd_total_time_ns,
                        stats->value->stats->flush_total_time_ns,
                        stats->value->stats->rd_merged,
-                       stats->value->stats->wr_merged);
+                       stats->value->stats->wr_merged,
+                       stats->value->stats->idle_time_ns);
     }
 
     qapi_free_BlockStatsList(stats_list);
@@ -569,8 +572,8 @@ void hmp_info_vnc(Monitor *mon, const QDict *qdict)
         for (client = info->clients; client; client = client->next) {
             monitor_printf(mon, "Client:\n");
             monitor_printf(mon, "     address: %s:%s\n",
-                           client->value->base->host,
-                           client->value->base->service);
+                           client->value->host,
+                           client->value->service);
             monitor_printf(mon, "  x509_dname: %s\n",
                            client->value->x509_dname ?
                            client->value->x509_dname : "none");
@@ -638,7 +641,7 @@ void hmp_info_spice(Monitor *mon, const QDict *qdict)
         for (chan = info->channels; chan; chan = chan->next) {
             monitor_printf(mon, "Channel:\n");
             monitor_printf(mon, "     address: %s:%s%s\n",
-                           chan->value->base->host, chan->value->base->port,
+                           chan->value->host, chan->value->port,
                            chan->value->tls ? " [tls]" : "");
             monitor_printf(mon, "     session: %" PRId64 "\n",
                            chan->value->connection_id);
@@ -841,11 +844,11 @@ void hmp_info_tpm(Monitor *mon, const QDict *qdict)
                        c, TpmModel_lookup[ti->model]);
 
         monitor_printf(mon, "  \\ %s: type=%s",
-                       ti->id, TpmTypeOptionsKind_lookup[ti->options->kind]);
+                       ti->id, TpmTypeOptionsKind_lookup[ti->options->type]);
 
-        switch (ti->options->kind) {
+        switch (ti->options->type) {
         case TPM_TYPE_OPTIONS_KIND_PASSTHROUGH:
-            tpo = ti->options->passthrough;
+            tpo = ti->options->u.passthrough;
             monitor_printf(mon, "%s%s%s%s",
                            tpo->has_path ? ",path=" : "",
                            tpo->has_path ? tpo->path : "",
@@ -1293,6 +1296,13 @@ void hmp_client_migrate_info(Monitor *mon, const QDict *qdict)
     hmp_handle_error(mon, &err);
 }
 
+void hmp_migrate_start_postcopy(Monitor *mon, const QDict *qdict)
+{
+    Error *err = NULL;
+    qmp_migrate_start_postcopy(&err);
+    hmp_handle_error(mon, &err);
+}
+
 void hmp_set_password(Monitor *mon, const QDict *qdict)
 {
     const char *protocol  = qdict_get_str(qdict, "protocol");
@@ -1336,24 +1346,46 @@ void hmp_change(Monitor *mon, const QDict *qdict)
     const char *device = qdict_get_str(qdict, "device");
     const char *target = qdict_get_str(qdict, "target");
     const char *arg = qdict_get_try_str(qdict, "arg");
+    const char *read_only = qdict_get_try_str(qdict, "read-only-mode");
+    BlockdevChangeReadOnlyMode read_only_mode = 0;
     Error *err = NULL;
 
-    if (strcmp(device, "vnc") == 0 &&
-            (strcmp(target, "passwd") == 0 ||
-             strcmp(target, "password") == 0)) {
-        if (!arg) {
-            monitor_read_password(mon, hmp_change_read_arg, NULL);
+    if (strcmp(device, "vnc") == 0) {
+        if (read_only) {
+            monitor_printf(mon,
+                           "Parameter 'read-only-mode' is invalid for VNC\n");
+            return;
+        }
+        if (strcmp(target, "passwd") == 0 ||
+            strcmp(target, "password") == 0) {
+            if (!arg) {
+                monitor_read_password(mon, hmp_change_read_arg, NULL);
+                return;
+            }
+        }
+        qmp_change("vnc", target, !!arg, arg, &err);
+    } else {
+        if (read_only) {
+            read_only_mode =
+                qapi_enum_parse(BlockdevChangeReadOnlyMode_lookup,
+                                read_only, BLOCKDEV_CHANGE_READ_ONLY_MODE_MAX,
+                                BLOCKDEV_CHANGE_READ_ONLY_MODE_RETAIN, &err);
+            if (err) {
+                hmp_handle_error(mon, &err);
+                return;
+            }
+        }
+
+        qmp_blockdev_change_medium(device, target, !!arg, arg,
+                                   !!read_only, read_only_mode, &err);
+        if (err &&
+            error_get_class(err) == ERROR_CLASS_DEVICE_ENCRYPTED) {
+            error_free(err);
+            monitor_read_block_device_key(mon, device, NULL, NULL);
             return;
         }
     }
 
-    qmp_change(device, target, !!arg, arg, &err);
-    if (err &&
-        error_get_class(err) == ERROR_CLASS_DEVICE_ENCRYPTED) {
-        error_free(err);
-        monitor_read_block_device_key(mon, device, NULL, NULL);
-        return;
-    }
     hmp_handle_error(mon, &err);
 }
 
@@ -1735,15 +1767,15 @@ void hmp_sendkey(Monitor *mon, const QDict *qdict)
             if (*endp != '\0') {
                 goto err_out;
             }
-            keylist->value->kind = KEY_VALUE_KIND_NUMBER;
-            keylist->value->number = value;
+            keylist->value->type = KEY_VALUE_KIND_NUMBER;
+            keylist->value->u.number = value;
         } else {
             int idx = index_from_key(keyname_buf);
             if (idx == Q_KEY_CODE_MAX) {
                 goto err_out;
             }
-            keylist->value->kind = KEY_VALUE_KIND_QCODE;
-            keylist->value->qcode = idx;
+            keylist->value->type = KEY_VALUE_KIND_QCODE;
+            keylist->value->u.qcode = idx;
         }
 
         if (!separator) {
@@ -1958,12 +1990,12 @@ void hmp_info_memory_devices(Monitor *mon, const QDict *qdict)
         value = info->value;
 
         if (value) {
-            switch (value->kind) {
+            switch (value->type) {
             case MEMORY_DEVICE_INFO_KIND_DIMM:
-                di = value->dimm;
+                di = value->u.dimm;
 
                 monitor_printf(mon, "Memory device [%s]: \"%s\"\n",
-                               MemoryDeviceInfoKind_lookup[value->kind],
+                               MemoryDeviceInfoKind_lookup[value->type],
                                di->id ? di->id : "");
                 monitor_printf(mon, "  addr: 0x%" PRIx64 "\n", di->addr);
                 monitor_printf(mon, "  slot: %" PRId64 "\n", di->slot);

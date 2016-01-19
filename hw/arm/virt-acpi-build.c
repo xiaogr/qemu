@@ -180,6 +180,7 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq,
     aml_append(dev, aml_name_decl("_ADR", aml_int(0)));
     aml_append(dev, aml_name_decl("_UID", aml_string("PCI0")));
     aml_append(dev, aml_name_decl("_STR", aml_unicode("PCIe 0 Device")));
+    aml_append(dev, aml_name_decl("_CCA", aml_int(1)));
 
     /* Declare the PCI Routing Table. */
     Aml *rt_pkg = aml_package(nr_pcie_buses * PCI_NUM_PINS);
@@ -380,7 +381,8 @@ build_spcr(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     spcr->pci_device_id = 0xffff;  /* PCI Device ID: not a PCI device */
     spcr->pci_vendor_id = 0xffff;  /* PCI Vendor ID: not a PCI device */
 
-    build_header(linker, table_data, (void *)spcr, "SPCR", sizeof(*spcr), 2);
+    build_header(linker, table_data, (void *)spcr, "SPCR", sizeof(*spcr), 2,
+                 NULL);
 }
 
 static void
@@ -399,7 +401,7 @@ build_mcfg(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     mcfg->allocation[0].end_bus_number = (memmap[VIRT_PCIE_ECAM].size
                                           / PCIE_MMCFG_SIZE_MIN) - 1;
 
-    build_header(linker, table_data, (void *)mcfg, "MCFG", len, 1);
+    build_header(linker, table_data, (void *)mcfg, "MCFG", len, 1, NULL);
 }
 
 /* GTDT */
@@ -425,7 +427,7 @@ build_gtdt(GArray *table_data, GArray *linker)
 
     build_header(linker, table_data,
                  (void *)(table_data->data + gtdt_start), "GTDT",
-                 table_data->len - gtdt_start, 2);
+                 table_data->len - gtdt_start, 2, NULL);
 }
 
 /* MADT */
@@ -448,6 +450,24 @@ build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info,
     gicd->length = sizeof(*gicd);
     gicd->base_address = memmap[VIRT_GIC_DIST].base;
 
+    for (i = 0; i < guest_info->smp_cpus; i++) {
+        AcpiMadtGenericInterrupt *gicc = acpi_data_push(table_data,
+                                                     sizeof *gicc);
+        ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(i));
+
+        gicc->type = ACPI_APIC_GENERIC_INTERRUPT;
+        gicc->length = sizeof(*gicc);
+        if (guest_info->gic_version == 2) {
+            gicc->base_address = memmap[VIRT_GIC_CPU].base;
+        }
+        gicc->cpu_interface_number = i;
+        gicc->arm_mpidr = armcpu->mp_affinity;
+        gicc->uid = i;
+        if (test_bit(i, cpuinfo->found_cpus)) {
+            gicc->flags = cpu_to_le32(ACPI_GICC_ENABLED);
+        }
+    }
+
     if (guest_info->gic_version == 3) {
         AcpiMadtGenericRedistributor *gicr = acpi_data_push(table_data,
                                                          sizeof *gicr);
@@ -457,20 +477,6 @@ build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info,
         gicr->base_address = cpu_to_le64(memmap[VIRT_GIC_REDIST].base);
         gicr->range_length = cpu_to_le32(memmap[VIRT_GIC_REDIST].size);
     } else {
-        for (i = 0; i < guest_info->smp_cpus; i++) {
-            AcpiMadtGenericInterrupt *gicc = acpi_data_push(table_data,
-                                                         sizeof *gicc);
-            gicc->type = ACPI_APIC_GENERIC_INTERRUPT;
-            gicc->length = sizeof(*gicc);
-            gicc->base_address = memmap[VIRT_GIC_CPU].base;
-            gicc->cpu_interface_number = i;
-            gicc->arm_mpidr = i;
-            gicc->uid = i;
-            if (test_bit(i, cpuinfo->found_cpus)) {
-                gicc->flags = cpu_to_le32(ACPI_GICC_ENABLED);
-            }
-        }
-
         gic_msi = acpi_data_push(table_data, sizeof *gic_msi);
         gic_msi->type = ACPI_APIC_GENERIC_MSI_FRAME;
         gic_msi->length = sizeof(*gic_msi);
@@ -483,7 +489,7 @@ build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info,
 
     build_header(linker, table_data,
                  (void *)(table_data->data + madt_start), "APIC",
-                 table_data->len - madt_start, 3);
+                 table_data->len - madt_start, 3, NULL);
 }
 
 /* FADT */
@@ -508,7 +514,7 @@ build_fadt(GArray *table_data, GArray *linker, unsigned dsdt)
                                    sizeof fadt->dsdt);
 
     build_header(linker, table_data,
-                 (void *)fadt, "FACP", sizeof(*fadt), 5);
+                 (void *)fadt, "FACP", sizeof(*fadt), 5, NULL);
 }
 
 /* DSDT */
@@ -541,7 +547,7 @@ build_dsdt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     g_array_append_vals(table_data, dsdt->buf->data, dsdt->buf->len);
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - dsdt->buf->len),
-        "DSDT", dsdt->buf->len, 2);
+        "DSDT", dsdt->buf->len, 2, NULL);
     free_aml_allocator();
 }
 

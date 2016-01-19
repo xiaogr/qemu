@@ -237,7 +237,7 @@ struct BusState {
 struct Property {
     const char   *name;
     PropertyInfo *info;
-    int          offset;
+    ptrdiff_t    offset;
     uint8_t      bitnr;
     qtype_code   qtype;
     int64_t      defval;
@@ -337,6 +337,7 @@ int qdev_walk_children(DeviceState *dev,
                        void *opaque);
 
 void qdev_reset_all(DeviceState *dev);
+void qdev_reset_all_fn(void *opaque);
 
 /**
  * @qbus_reset_all:

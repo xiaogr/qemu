@@ -448,26 +448,57 @@ int virtqueue_avail_bytes(VirtQueue *vq, unsigned int in_bytes,
     return in_bytes <= in_total && out_bytes <= out_total;
 }
 
-void virtqueue_map_sg(struct iovec *sg, hwaddr *addr,
-    size_t num_sg, int is_write)
+static void virtqueue_map_iovec(struct iovec *sg, hwaddr *addr,
+                                unsigned int *num_sg, unsigned int max_size,
+                                int is_write)
 {
     unsigned int i;
     hwaddr len;
 
-    if (num_sg > VIRTQUEUE_MAX_SIZE) {
-        error_report("virtio: map attempt out of bounds: %zd > %d",
-                     num_sg, VIRTQUEUE_MAX_SIZE);
-        exit(1);
-    }
+    /* Note: this function MUST validate input, some callers
+     * are passing in num_sg values received over the network.
+     */
+    /* TODO: teach all callers that this can fail, and return failure instead
+     * of asserting here.
+     * When we do, we might be able to re-enable NDEBUG below.
+     */
+#ifdef NDEBUG
+#error building with NDEBUG is not supported
+#endif
+    assert(*num_sg <= max_size);
 
-    for (i = 0; i < num_sg; i++) {
+    for (i = 0; i < *num_sg; i++) {
         len = sg[i].iov_len;
         sg[i].iov_base = cpu_physical_memory_map(addr[i], &len, is_write);
-        if (sg[i].iov_base == NULL || len != sg[i].iov_len) {
+        if (!sg[i].iov_base) {
             error_report("virtio: error trying to map MMIO memory");
             exit(1);
         }
+        if (len == sg[i].iov_len) {
+            continue;
+        }
+        if (*num_sg >= max_size) {
+            error_report("virtio: memory split makes iovec too large");
+            exit(1);
+        }
+        memmove(sg + i + 1, sg + i, sizeof(*sg) * (*num_sg - i));
+        memmove(addr + i + 1, addr + i, sizeof(*addr) * (*num_sg - i));
+        assert(len < sg[i + 1].iov_len);
+        sg[i].iov_len = len;
+        addr[i + 1] += len;
+        sg[i + 1].iov_len -= len;
+        ++*num_sg;
     }
+}
+
+void virtqueue_map(VirtQueueElement *elem)
+{
+    virtqueue_map_iovec(elem->in_sg, elem->in_addr, &elem->in_num,
+                        MIN(ARRAY_SIZE(elem->in_sg), ARRAY_SIZE(elem->in_addr)),
+                        1);
+    virtqueue_map_iovec(elem->out_sg, elem->out_addr, &elem->out_num,
+                        MIN(ARRAY_SIZE(elem->out_sg), ARRAY_SIZE(elem->out_addr)),
+                        0);
 }
 
 int virtqueue_pop(VirtQueue *vq, VirtQueueElement *elem)
@@ -531,8 +562,7 @@ int virtqueue_pop(VirtQueue *vq, VirtQueueElement *elem)
     } while ((i = virtqueue_next_desc(vdev, desc_pa, i, max)) != max);
 
     /* Now map what we have collected */
-    virtqueue_map_sg(elem->in_sg, elem->in_addr, elem->in_num, 1);
-    virtqueue_map_sg(elem->out_sg, elem->out_addr, elem->out_num, 0);
+    virtqueue_map(elem);
 
     elem->index = head;
 
@@ -1086,6 +1116,16 @@ static bool virtio_ringsize_needed(void *opaque)
     return false;
 }
 
+static bool virtio_extra_state_needed(void *opaque)
+{
+    VirtIODevice *vdev = opaque;
+    BusState *qbus = qdev_get_parent_bus(DEVICE(vdev));
+    VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus);
+
+    return k->has_extra_state &&
+        k->has_extra_state(qbus->parent);
+}
+
 static void put_virtqueue_state(QEMUFile *f, void *pv, size_t size)
 {
     VirtIODevice *vdev = pv;
@@ -1180,6 +1220,53 @@ static const VMStateDescription vmstate_virtio_ringsize = {
     }
 };
 
+static int get_extra_state(QEMUFile *f, void *pv, size_t size)
+{
+    VirtIODevice *vdev = pv;
+    BusState *qbus = qdev_get_parent_bus(DEVICE(vdev));
+    VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus);
+
+    if (!k->load_extra_state) {
+        return -1;
+    } else {
+        return k->load_extra_state(qbus->parent, f);
+    }
+}
+
+static void put_extra_state(QEMUFile *f, void *pv, size_t size)
+{
+    VirtIODevice *vdev = pv;
+    BusState *qbus = qdev_get_parent_bus(DEVICE(vdev));
+    VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus);
+
+    k->save_extra_state(qbus->parent, f);
+}
+
+static const VMStateInfo vmstate_info_extra_state = {
+    .name = "virtqueue_extra_state",
+    .get = get_extra_state,
+    .put = put_extra_state,
+};
+
+static const VMStateDescription vmstate_virtio_extra_state = {
+    .name = "virtio/extra_state",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = &virtio_extra_state_needed,
+    .fields = (VMStateField[]) {
+        {
+            .name         = "extra_state",
+            .version_id   = 0,
+            .field_exists = NULL,
+            .size         = 0,
+            .info         = &vmstate_info_extra_state,
+            .flags        = VMS_SINGLE,
+            .offset       = 0,
+        },
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static const VMStateDescription vmstate_virtio_device_endian = {
     .name = "virtio/device_endian",
     .version_id = 1,
@@ -1215,6 +1302,7 @@ static const VMStateDescription vmstate_virtio = {
         &vmstate_virtio_64bit_features,
         &vmstate_virtio_virtqueues,
         &vmstate_virtio_ringsize,
+        &vmstate_virtio_extra_state,
         NULL
     }
 };

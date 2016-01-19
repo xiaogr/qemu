@@ -57,7 +57,7 @@ typedef enum VhostUserRequest {
     VHOST_USER_GET_FEATURES = 1,
     VHOST_USER_SET_FEATURES = 2,
     VHOST_USER_SET_OWNER = 3,
-    VHOST_USER_RESET_DEVICE = 4,
+    VHOST_USER_RESET_OWNER = 4,
     VHOST_USER_SET_MEM_TABLE = 5,
     VHOST_USER_SET_LOG_BASE = 6,
     VHOST_USER_SET_LOG_FD = 7,
@@ -70,6 +70,7 @@ typedef enum VhostUserRequest {
     VHOST_USER_SET_VRING_ERR = 14,
     VHOST_USER_GET_PROTOCOL_FEATURES = 15,
     VHOST_USER_SET_PROTOCOL_FEATURES = 16,
+    VHOST_USER_SET_VRING_ENABLE = 18,
     VHOST_USER_MAX
 } VhostUserRequest;
 
@@ -86,6 +87,11 @@ typedef struct VhostUserMemory {
     VhostUserMemoryRegion regions[VHOST_MEMORY_MAX_NREGIONS];
 } VhostUserMemory;
 
+typedef struct VhostUserLog {
+    uint64_t mmap_size;
+    uint64_t mmap_offset;
+} VhostUserLog;
+
 typedef struct VhostUserMsg {
     VhostUserRequest request;
 
@@ -94,11 +100,14 @@ typedef struct VhostUserMsg {
     uint32_t flags;
     uint32_t size; /* the following payload size */
     union {
+#define VHOST_USER_VRING_IDX_MASK   (0xff)
+#define VHOST_USER_VRING_NOFD_MASK  (0x1<<8)
         uint64_t u64;
         struct vhost_vring_state state;
         struct vhost_vring_addr addr;
         VhostUserMemory memory;
-    };
+        VhostUserLog log;
+    } payload;
 } QEMU_PACKED VhostUserMsg;
 
 static VhostUserMsg m __attribute__ ((unused));
@@ -114,6 +123,7 @@ static VhostUserMsg m __attribute__ ((unused));
 
 typedef struct TestServer {
     gchar *socket_path;
+    gchar *mig_path;
     gchar *chr_name;
     CharDriverState *chr;
     int fds_num;
@@ -122,6 +132,7 @@ typedef struct TestServer {
     GMutex data_mutex;
     GCond data_cond;
     int log_fd;
+    uint64_t rings;
 } TestServer;
 
 #if !GLIB_CHECK_VERSION(2, 32, 0)
@@ -206,8 +217,7 @@ static void read_guest_mem(TestServer *s)
 
 static void *thread_function(void *data)
 {
-    GMainLoop *loop;
-    loop = g_main_loop_new(NULL, FALSE);
+    GMainLoop *loop = data;
     g_main_loop_run(loop);
     return NULL;
 }
@@ -242,23 +252,23 @@ static void chr_read(void *opaque, const uint8_t *buf, int size)
     case VHOST_USER_GET_FEATURES:
         /* send back features to qemu */
         msg.flags |= VHOST_USER_REPLY_MASK;
-        msg.size = sizeof(m.u64);
-        msg.u64 = 0x1ULL << VHOST_F_LOG_ALL |
+        msg.size = sizeof(m.payload.u64);
+        msg.payload.u64 = 0x1ULL << VHOST_F_LOG_ALL |
             0x1ULL << VHOST_USER_F_PROTOCOL_FEATURES;
         p = (uint8_t *) &msg;
         qemu_chr_fe_write_all(chr, p, VHOST_USER_HDR_SIZE + msg.size);
         break;
 
     case VHOST_USER_SET_FEATURES:
-	g_assert_cmpint(msg.u64 & (0x1ULL << VHOST_USER_F_PROTOCOL_FEATURES),
+	g_assert_cmpint(msg.payload.u64 & (0x1ULL << VHOST_USER_F_PROTOCOL_FEATURES),
 			!=, 0ULL);
         break;
 
     case VHOST_USER_GET_PROTOCOL_FEATURES:
         /* send back features to qemu */
         msg.flags |= VHOST_USER_REPLY_MASK;
-        msg.size = sizeof(m.u64);
-        msg.u64 = 1 << VHOST_USER_PROTOCOL_F_LOG_SHMFD;
+        msg.size = sizeof(m.payload.u64);
+        msg.payload.u64 = 1 << VHOST_USER_PROTOCOL_F_LOG_SHMFD;
         p = (uint8_t *) &msg;
         qemu_chr_fe_write_all(chr, p, VHOST_USER_HDR_SIZE + msg.size);
         break;
@@ -266,15 +276,18 @@ static void chr_read(void *opaque, const uint8_t *buf, int size)
     case VHOST_USER_GET_VRING_BASE:
         /* send back vring base to qemu */
         msg.flags |= VHOST_USER_REPLY_MASK;
-        msg.size = sizeof(m.state);
-        msg.state.num = 0;
+        msg.size = sizeof(m.payload.state);
+        msg.payload.state.num = 0;
         p = (uint8_t *) &msg;
         qemu_chr_fe_write_all(chr, p, VHOST_USER_HDR_SIZE + msg.size);
+
+        assert(msg.payload.state.index < 2);
+        s->rings &= ~(0x1ULL << msg.payload.state.index);
         break;
 
     case VHOST_USER_SET_MEM_TABLE:
         /* received the mem table */
-        memcpy(&s->memory, &msg.memory, sizeof(msg.memory));
+        memcpy(&s->memory, &msg.payload.memory, sizeof(msg.payload.memory));
         s->fds_num = qemu_chr_fe_get_msgfds(chr, s->fds, G_N_ELEMENTS(s->fds));
 
         /* signal the test that it can continue */
@@ -307,8 +320,9 @@ static void chr_read(void *opaque, const uint8_t *buf, int size)
         g_cond_signal(&s->data_cond);
         break;
 
-    case VHOST_USER_RESET_DEVICE:
-        s->fds_num = 0;
+    case VHOST_USER_SET_VRING_BASE:
+        assert(msg.payload.state.index < 2);
+        s->rings |= 0x1ULL << msg.payload.state.index;
         break;
 
     default:
@@ -351,6 +365,7 @@ static TestServer *test_server_new(const gchar *name)
     gchar *chr_path;
 
     server->socket_path = g_strdup_printf("%s/%s.sock", tmpfs, name);
+    server->mig_path = g_strdup_printf("%s/%s.mig", tmpfs, name);
 
     chr_path = g_strdup_printf("unix:%s,server,nowait", server->socket_path);
     server->chr_name = g_strdup_printf("chr-%s", name);
@@ -375,7 +390,7 @@ static TestServer *test_server_new(const gchar *name)
     g_strdup_printf(QEMU_CMD extra, (mem), (mem), (root), (s)->chr_name,       \
                     (s)->socket_path, (s)->chr_name, ##__VA_ARGS__)
 
-static void test_server_free(TestServer *server)
+static gboolean _test_server_free(TestServer *server)
 {
     int i;
 
@@ -392,9 +407,18 @@ static void test_server_free(TestServer *server)
     unlink(server->socket_path);
     g_free(server->socket_path);
 
+    unlink(server->mig_path);
+    g_free(server->mig_path);
 
     g_free(server->chr_name);
     g_free(server);
+
+    return FALSE;
+}
+
+static void test_server_free(TestServer *server)
+{
+    g_idle_add((GSourceFunc)_test_server_free, server);
 }
 
 static void wait_for_log_fd(TestServer *s)
@@ -475,25 +499,30 @@ static gboolean
 test_migrate_source_check(GSource *source)
 {
     TestMigrateSource *t = (TestMigrateSource *)source;
-    gboolean overlap = t->src->fds_num > 0 && t->dest->fds_num > 0;
+    gboolean overlap = t->src->rings && t->dest->rings;
 
     g_assert(!overlap);
 
     return FALSE;
 }
 
+static gboolean
+test_migrate_source_prepare(GSource *source, gint *timeout)
+{
+    *timeout = -1;
+    return FALSE;
+}
+
 GSourceFuncs test_migrate_source_funcs = {
-    NULL,
-    test_migrate_source_check,
-    NULL,
-    NULL
+    .prepare = test_migrate_source_prepare,
+    .check = test_migrate_source_check,
 };
 
 static void test_migrate(void)
 {
     TestServer *s = test_server_new("src");
     TestServer *dest = test_server_new("dest");
-    const char *uri = "tcp:127.0.0.1:1234";
+    char *uri = g_strdup_printf("%s%s", "unix:", dest->mig_path);
     QTestState *global = global_qtest, *from, *to;
     GSource *source;
     gchar *cmd;
@@ -564,6 +593,7 @@ static void test_migrate(void)
     test_server_free(dest);
     qtest_quit(from);
     test_server_free(s);
+    g_free(uri);
 
     global_qtest = global;
 }
@@ -576,6 +606,8 @@ int main(int argc, char **argv)
     char *qemu_cmd = NULL;
     int ret;
     char template[] = "/tmp/vhost-test-XXXXXX";
+    GMainLoop *loop;
+    GThread *thread;
 
     g_test_init(&argc, &argv, NULL);
 
@@ -598,8 +630,9 @@ int main(int argc, char **argv)
 
     server = test_server_new("test");
 
+    loop = g_main_loop_new(NULL, FALSE);
     /* run the main loop thread so the chardev may operate */
-    g_thread_new(NULL, thread_function, NULL);
+    thread = g_thread_new(NULL, thread_function, loop);
 
     qemu_cmd = GET_QEMU_CMD(server);
 
@@ -617,6 +650,14 @@ int main(int argc, char **argv)
 
     /* cleanup */
     test_server_free(server);
+
+    /* finish the helper thread and dispatch pending sources */
+    g_main_loop_quit(loop);
+    g_thread_join(thread);
+    while (g_main_context_pending(NULL)) {
+        g_main_context_iteration (NULL, TRUE);
+    }
+    g_main_loop_unref(loop);
 
     ret = rmdir(tmpfs);
     if (ret != 0) {

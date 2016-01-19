@@ -28,6 +28,7 @@
 #include "qapi/qmp/qerror.h"
 #include "qemu/queue.h"
 #include "qemu/host-utils.h"
+#include "qemu/sockets.h"
 
 #ifndef CONFIG_HAS_ENVIRON
 #ifdef __APPLE__
@@ -215,9 +216,16 @@ void qmp_guest_set_time(bool has_time, int64_t time_ns, Error **errp)
     }
 }
 
+typedef enum {
+    RW_STATE_NEW,
+    RW_STATE_READING,
+    RW_STATE_WRITING,
+} RwState;
+
 typedef struct GuestFileHandle {
     uint64_t id;
     FILE *fh;
+    RwState state;
     QTAILQ_ENTRY(GuestFileHandle) next;
 } GuestFileHandle;
 
@@ -385,27 +393,6 @@ safe_open_or_create(const char *path, const char *mode, Error **errp)
     return NULL;
 }
 
-static int guest_file_toggle_flags(int fd, int flags, bool set, Error **err)
-{
-    int ret, old_flags;
-
-    old_flags = fcntl(fd, F_GETFL);
-    if (old_flags == -1) {
-        error_setg_errno(err, errno, QERR_QGA_COMMAND_FAILED,
-                         "failed to fetch filehandle flags");
-        return -1;
-    }
-
-    ret = fcntl(fd, F_SETFL, set ? (old_flags | flags) : (old_flags & ~flags));
-    if (ret == -1) {
-        error_setg_errno(err, errno, QERR_QGA_COMMAND_FAILED,
-                         "failed to set filehandle flags");
-        return -1;
-    }
-
-    return ret;
-}
-
 int64_t qmp_guest_file_open(const char *path, bool has_mode, const char *mode,
                             Error **errp)
 {
@@ -426,10 +413,7 @@ int64_t qmp_guest_file_open(const char *path, bool has_mode, const char *mode,
     /* set fd non-blocking to avoid common use cases (like reading from a
      * named pipe) from hanging the agent
      */
-    if (guest_file_toggle_flags(fileno(fh), O_NONBLOCK, true, errp) < 0) {
-        fclose(fh);
-        return -1;
-    }
+    qemu_set_nonblock(fileno(fh));
 
     handle = guest_file_handle_add(fh, errp);
     if (handle < 0) {
@@ -483,6 +467,17 @@ struct GuestFileRead *qmp_guest_file_read(int64_t handle, bool has_count,
     }
 
     fh = gfh->fh;
+
+    /* explicitly flush when switching from writing to reading */
+    if (gfh->state == RW_STATE_WRITING) {
+        int ret = fflush(fh);
+        if (ret == EOF) {
+            error_setg_errno(errp, errno, "failed to flush file");
+            return NULL;
+        }
+        gfh->state = RW_STATE_NEW;
+    }
+
     buf = g_malloc0(count+1);
     read_count = fread(buf, 1, count, fh);
     if (ferror(fh)) {
@@ -496,6 +491,7 @@ struct GuestFileRead *qmp_guest_file_read(int64_t handle, bool has_count,
         if (read_count) {
             read_data->buf_b64 = g_base64_encode(buf, read_count);
         }
+        gfh->state = RW_STATE_READING;
     }
     g_free(buf);
     clearerr(fh);
@@ -519,6 +515,16 @@ GuestFileWrite *qmp_guest_file_write(int64_t handle, const char *buf_b64,
     }
 
     fh = gfh->fh;
+
+    if (gfh->state == RW_STATE_READING) {
+        int ret = fseek(fh, 0, SEEK_CUR);
+        if (ret == -1) {
+            error_setg_errno(errp, errno, "failed to seek file");
+            return NULL;
+        }
+        gfh->state = RW_STATE_NEW;
+    }
+
     buf = g_base64_decode(buf_b64, &buf_len);
 
     if (!has_count) {
@@ -538,6 +544,7 @@ GuestFileWrite *qmp_guest_file_write(int64_t handle, const char *buf_b64,
         write_data = g_new0(GuestFileWrite, 1);
         write_data->count = write_count;
         write_data->eof = feof(fh);
+        gfh->state = RW_STATE_WRITING;
     }
     g_free(buf);
     clearerr(fh);
@@ -546,14 +553,31 @@ GuestFileWrite *qmp_guest_file_write(int64_t handle, const char *buf_b64,
 }
 
 struct GuestFileSeek *qmp_guest_file_seek(int64_t handle, int64_t offset,
-                                          int64_t whence, Error **errp)
+                                          int64_t whence_code, Error **errp)
 {
     GuestFileHandle *gfh = guest_file_handle_find(handle, errp);
     GuestFileSeek *seek_data = NULL;
     FILE *fh;
     int ret;
+    int whence;
 
     if (!gfh) {
+        return NULL;
+    }
+
+    /* We stupidly exposed 'whence':'int' in our qapi */
+    switch (whence_code) {
+    case QGA_SEEK_SET:
+        whence = SEEK_SET;
+        break;
+    case QGA_SEEK_CUR:
+        whence = SEEK_CUR;
+        break;
+    case QGA_SEEK_END:
+        whence = SEEK_END;
+        break;
+    default:
+        error_setg(errp, "invalid whence code %"PRId64, whence_code);
         return NULL;
     }
 
@@ -561,10 +585,15 @@ struct GuestFileSeek *qmp_guest_file_seek(int64_t handle, int64_t offset,
     ret = fseek(fh, offset, whence);
     if (ret == -1) {
         error_setg_errno(errp, errno, "failed to seek file");
+        if (errno == ESPIPE) {
+            /* file is non-seekable, stdio shouldn't be buffering anyways */
+            gfh->state = RW_STATE_NEW;
+        }
     } else {
         seek_data = g_new0(GuestFileSeek, 1);
         seek_data->position = ftell(fh);
         seek_data->eof = feof(fh);
+        gfh->state = RW_STATE_NEW;
     }
     clearerr(fh);
 
@@ -585,6 +614,8 @@ void qmp_guest_file_flush(int64_t handle, Error **errp)
     ret = fflush(fh);
     if (ret == EOF) {
         error_setg_errno(errp, errno, "failed to flush file");
+    } else {
+        gfh->state = RW_STATE_NEW;
     }
 }
 

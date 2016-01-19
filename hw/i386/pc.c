@@ -1616,7 +1616,6 @@ static void pc_dimm_plug(HotplugHandler *hotplug_dev,
     HotplugHandlerClass *hhc;
     Error *local_err = NULL;
     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
-    PCMachineClass *pcmc = PC_MACHINE_GET_CLASS(pcms);
     PCDIMMDevice *dimm = PC_DIMM(dev);
     PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
     MemoryRegion *mr = ddc->get_memory_region(dimm);
@@ -1632,8 +1631,7 @@ static void pc_dimm_plug(HotplugHandler *hotplug_dev,
         goto out;
     }
 
-    pc_dimm_memory_plug(dev, &pcms->hotplug_memory, mr, align,
-                        pcmc->inter_dimm_gap, &local_err);
+    pc_dimm_memory_plug(dev, &pcms->hotplug_memory, mr, align, &local_err);
     if (local_err) {
         goto out;
     }
@@ -1797,9 +1795,9 @@ static void pc_machine_set_max_ram_below_4g(Object *obj, Visitor *v,
         return;
     }
     if (value > (1ULL << 32)) {
-        error_set(&error, ERROR_CLASS_GENERIC_ERROR,
-                  "Machine option 'max-ram-below-4g=%"PRIu64
-                  "' expects size less than or equal to 4G", value);
+        error_setg(&error,
+                   "Machine option 'max-ram-below-4g=%"PRIu64
+                   "' expects size less than or equal to 4G", value);
         error_propagate(errp, error);
         return;
     }
@@ -1879,6 +1877,20 @@ static bool pc_machine_get_aligned_dimm(Object *obj, Error **errp)
     return pcms->enforce_aligned_dimm;
 }
 
+static bool pc_machine_get_nvdimm(Object *obj, Error **errp)
+{
+    PCMachineState *pcms = PC_MACHINE(obj);
+
+    return pcms->nvdimm;
+}
+
+static void pc_machine_set_nvdimm(Object *obj, bool value, Error **errp)
+{
+    PCMachineState *pcms = PC_MACHINE(obj);
+
+    pcms->nvdimm = value;
+}
+
 static void pc_machine_initfn(Object *obj)
 {
     PCMachineState *pcms = PC_MACHINE(obj);
@@ -1918,6 +1930,11 @@ static void pc_machine_initfn(Object *obj)
     object_property_add_bool(obj, PC_MACHINE_ENFORCE_ALIGNED_DIMM,
                              pc_machine_get_aligned_dimm,
                              NULL, &error_abort);
+
+    /* nvdimm is disabled on default. */
+    pcms->nvdimm = false;
+    object_property_add_bool(obj, PC_MACHINE_NVDIMM, pc_machine_get_nvdimm,
+                             pc_machine_set_nvdimm, &error_abort);
 }
 
 static void pc_machine_reset(void)
@@ -1953,7 +1970,6 @@ static void pc_machine_class_init(ObjectClass *oc, void *data)
     PCMachineClass *pcmc = PC_MACHINE_CLASS(oc);
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
-    pcmc->inter_dimm_gap = true;
     pcmc->get_hotplug_handler = mc->get_hotplug_handler;
     mc->get_hotplug_handler = pc_get_hotpug_handler;
     mc->cpu_index_to_socket_id = pc_cpu_index_to_socket_id;

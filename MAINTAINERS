@@ -62,14 +62,22 @@ Guest CPU cores (TCG):
 ----------------------
 Overall
 L: qemu-devel@nongnu.org
-S: Odd fixes
+M: Paolo Bonzini <pbonzini@redhat.com>
+M: Peter Crosthwaite <crosthwaite.peter@gmail.com>
+M: Richard Henderson <rth@twiddle.net>
+S: Maintained
 F: cpu-exec.c
+F: cpu-exec-common.c
+F: cpus.c
 F: cputlb.c
+F: exec.c
 F: softmmu_template.h
-F: translate-all.c
-F: include/exec/cpu_ldst.h
-F: include/exec/cpu_ldst_template.h
+F: translate-all.*
+F: translate-common.c
+F: include/exec/cpu*.h
+F: include/exec/exec-all.h
 F: include/exec/helper*.h
+F: include/exec/tb-hash.h
 
 Alpha
 M: Richard Henderson <rth@twiddle.net>
@@ -81,6 +89,7 @@ F: disas/alpha.c
 
 ARM
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: target-arm/
 F: hw/arm/
@@ -216,6 +225,7 @@ F: */kvm.*
 
 ARM
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: target-arm/kvm.c
 
@@ -235,9 +245,14 @@ M: Cornelia Huck <cornelia.huck@de.ibm.com>
 M: Alexander Graf <agraf@suse.de>
 S: Maintained
 F: target-s390x/kvm.c
+F: target-s390x/ioinst.[ch]
+F: target-s390x/machine.c
 F: hw/intc/s390_flic.c
 F: hw/intc/s390_flic_kvm.c
 F: include/hw/s390x/s390_flic.h
+F: gdb-xml/s390*.xml
+T: git git://github.com/cohuck/qemu.git s390-next
+T: git git://github.com/borntraeger/qemu.git s390-next
 
 X86
 M: Paolo Bonzini <pbonzini@redhat.com>
@@ -287,6 +302,7 @@ ARM Machines
 ------------
 Allwinner-a10
 M: Beniamino Galvani <b.galvani@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/*/allwinner*
 F: include/hw/*/allwinner*
@@ -294,6 +310,7 @@ F: hw/arm/cubieboard.c
 
 ARM PrimeCell
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/char/pl011.c
 F: hw/display/pl110*
@@ -308,6 +325,7 @@ F: include/hw/arm/primecell.h
 
 ARM cores
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/intc/arm*
 F: hw/intc/gic_internal.h
@@ -327,54 +345,64 @@ M: Evgeny Voevodin <e.voevodin@samsung.com>
 M: Maksim Kozlov <m.kozlov@samsung.com>
 M: Igor Mitsyanko <i.mitsyanko@gmail.com>
 M: Dmitry Solodkiy <d.solodkiy@samsung.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/*/exynos*
 
 Calxeda Highbank
 M: Rob Herring <robh@kernel.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/highbank.c
 F: hw/net/xgmac.c
 
 Canon DIGIC
 M: Antony Pavlov <antonynpavlov@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: include/hw/arm/digic.h
 F: hw/*/digic*
 
 Gumstix
 L: qemu-devel@nongnu.org
+L: qemu-arm@nongnu.org
 S: Orphan
 F: hw/arm/gumstix.c
 
 i.MX31
 M: Peter Chubb <peter.chubb@nicta.com.au>
+L: qemu-arm@nongnu.org
 S: Odd fixes
 F: hw/*/imx*
 F: hw/arm/kzm.c
 
 Integrator CP
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/integratorcp.c
 
 Musicpal
 M: Jan Kiszka <jan.kiszka@web.de>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/musicpal.c
 
 nSeries
 M: Andrzej Zaborowski <balrogg@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/nseries.c
 
 Palm
 M: Andrzej Zaborowski <balrogg@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/palm.c
 
 Real View
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/realview*
 F: hw/intc/realview_gic.c
@@ -382,6 +410,7 @@ F: include/hw/intc/realview_gic.h
 
 PXA2XX
 M: Andrzej Zaborowski <balrogg@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/mainstone.c
 F: hw/arm/spitz.c
@@ -391,17 +420,20 @@ F: hw/*/pxa2xx*
 
 Stellaris
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/*/stellaris*
 
 Versatile PB
 M: Peter Maydell <peter.maydell@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/*/versatile*
 
 Xilinx Zynq
 M: Alistair Francis <alistair.francis@xilinx.com>
 M: Peter Crosthwaite <crosthwaite.peter@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/xilinx_zynq.c
 F: hw/misc/zynq_slcr.c
@@ -411,6 +443,7 @@ F: hw/ssi/xilinx_spips.c
 Xilinx ZynqMP
 M: Alistair Francis <alistair.francis@xilinx.com>
 M: Peter Crosthwaite <crosthwaite.peter@gmail.com>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/xlnx-zynqmp.c
 F: hw/arm/xlnx-ep108.c
@@ -419,6 +452,7 @@ F: include/hw/arm/xlnx-zynqmp.h
 ARM ACPI Subsystem
 M: Shannon Zhao <zhaoshenglong@huawei.com>
 M: Shannon Zhao <shannon.zhao@linaro.org>
+L: qemu-arm@nongnu.org
 S: Maintained
 F: hw/arm/virt-acpi-build.c
 F: include/hw/arm/virt-acpi-build.h
@@ -616,15 +650,13 @@ M: Christian Borntraeger <borntraeger@de.ibm.com>
 M: Alexander Graf <agraf@suse.de>
 S: Supported
 F: hw/char/sclp*.[hc]
-F: hw/s390x/s390-virtio-ccw.c
-F: hw/s390x/css.[hc]
-F: hw/s390x/sclp*.[hc]
-F: hw/s390x/ipl*.[hc]
-F: hw/s390x/*pci*.[hc]
-F: hw/s390x/s390-skeys*.c
+F: hw/s390x/
+X: hw/s390x/s390-virtio-bus.[ch]
 F: include/hw/s390x/
 F: pc-bios/s390-ccw/
-T: git git://github.com/cohuck/qemu virtio-ccw-upstr
+F: hw/watchdog/wdt_diag288.c
+T: git git://github.com/cohuck/qemu.git s390-next
+T: git git://github.com/borntraeger/qemu.git s390-next
 
 UniCore32 Machines
 -------------
@@ -851,7 +883,8 @@ M: Cornelia Huck <cornelia.huck@de.ibm.com>
 M: Christian Borntraeger <borntraeger@de.ibm.com>
 S: Supported
 F: hw/s390x/virtio-ccw.[hc]
-T: git git://github.com/cohuck/qemu virtio-ccw-upstr
+T: git git://github.com/cohuck/qemu.git s390-next
+T: git git://github.com/borntraeger/qemu.git s390-next
 
 virtio-input
 M: Gerd Hoffmann <kraxel@redhat.com>
@@ -906,6 +939,13 @@ M: Scott Feldman <sfeldma@gmail.com>
 M: Jiri Pirko <jiri@resnulli.us>
 S: Maintained
 F: hw/net/rocker/
+
+NVDIMM
+M: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+S: Maintained
+F: hw/acpi/nvdimm.c
+F: hw/mem/nvdimm.c
+F: include/hw/mem/nvdimm.h
 
 Subsystems
 ----------
@@ -1017,6 +1057,7 @@ S: Supported
 F: include/exec/ioport.h
 F: ioport.c
 F: include/exec/memory.h
+F: include/exec/ram_addr.h
 F: memory.c
 F: include/exec/memory-internal.h
 F: exec.c
@@ -1139,6 +1180,8 @@ F: include/qom/
 X: include/qom/cpu.h
 F: qom/
 X: qom/cpu.c
+F: tests/check-qom-interface.c
+F: tests/check-qom-proplist.c
 F: tests/qom-test.c
 
 QMP
@@ -1235,6 +1278,7 @@ AArch64 target
 M: Claudio Fontana <claudio.fontana@huawei.com>
 M: Claudio Fontana <claudio.fontana@gmail.com>
 S: Maintained
+L: qemu-arm@nongnu.org
 F: tcg/aarch64/
 F: disas/arm-a64.cc
 F: disas/libvixl/
@@ -1242,6 +1286,7 @@ F: disas/libvixl/
 ARM target
 M: Andrzej Zaborowski <balrogg@gmail.com>
 S: Maintained
+L: qemu-arm@nongnu.org
 F: tcg/arm/
 F: disas/arm.c
 

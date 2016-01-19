@@ -39,6 +39,7 @@
 #include "hw/loader.h"
 #include "hw/isa/isa.h"
 #include "hw/acpi/memory_hotplug.h"
+#include "hw/mem/nvdimm.h"
 #include "sysemu/tpm.h"
 #include "hw/acpi/tpm.h"
 #include "sysemu/tpm_backend.h"
@@ -361,7 +362,7 @@ build_fadt(GArray *table_data, GArray *linker, AcpiPmInfo *pm,
     fadt_setup(fadt, pm);
 
     build_header(linker, table_data,
-                 (void *)fadt, "FACP", sizeof(*fadt), 1);
+                 (void *)fadt, "FACP", sizeof(*fadt), 1, NULL);
 }
 
 static void
@@ -431,7 +432,7 @@ build_madt(GArray *table_data, GArray *linker, AcpiCpuInfo *cpu,
 
     build_header(linker, table_data,
                  (void *)(table_data->data + madt_start), "APIC",
-                 table_data->len - madt_start, 1);
+                 table_data->len - madt_start, 1, NULL);
 }
 
 /* Assign BSEL property to all buses.  In the future, this can be changed
@@ -1349,7 +1350,7 @@ build_ssdt(GArray *table_data, GArray *linker,
     g_array_append_vals(table_data, ssdt->buf->data, ssdt->buf->len);
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - ssdt->buf->len),
-        "SSDT", ssdt->buf->len, 1);
+        "SSDT", ssdt->buf->len, 1, NULL);
     free_aml_allocator();
 }
 
@@ -1365,7 +1366,7 @@ build_hpet(GArray *table_data, GArray *linker)
     hpet->timer_block_id = cpu_to_le32(0x8086a201);
     hpet->addr.address = cpu_to_le64(HPET_BASE);
     build_header(linker, table_data,
-                 (void *)hpet, "HPET", sizeof(*hpet), 1);
+                 (void *)hpet, "HPET", sizeof(*hpet), 1, NULL);
 }
 
 static void
@@ -1388,7 +1389,7 @@ build_tpm_tcpa(GArray *table_data, GArray *linker, GArray *tcpalog)
                                    sizeof(tcpa->log_area_start_address));
 
     build_header(linker, table_data,
-                 (void *)tcpa, "TCPA", sizeof(*tcpa), 2);
+                 (void *)tcpa, "TCPA", sizeof(*tcpa), 2, NULL);
 
     acpi_data_push(tcpalog, TPM_LOG_AREA_MINIMUM_SIZE);
 }
@@ -1405,7 +1406,7 @@ build_tpm2(GArray *table_data, GArray *linker)
     tpm2_ptr->start_method = cpu_to_le32(TPM2_START_METHOD_MMIO);
 
     build_header(linker, table_data,
-                 (void *)tpm2_ptr, "TPM2", sizeof(*tpm2_ptr), 4);
+                 (void *)tpm2_ptr, "TPM2", sizeof(*tpm2_ptr), 4, NULL);
 }
 
 typedef enum {
@@ -1519,7 +1520,7 @@ build_srat(GArray *table_data, GArray *linker, PcGuestInfo *guest_info)
     build_header(linker, table_data,
                  (void *)(table_data->data + srat_start),
                  "SRAT",
-                 table_data->len - srat_start, 1);
+                 table_data->len - srat_start, 1, NULL);
 }
 
 static void
@@ -1548,7 +1549,7 @@ build_mcfg_q35(GArray *table_data, GArray *linker, AcpiMcfgInfo *info)
     } else {
         sig = "MCFG";
     }
-    build_header(linker, table_data, (void *)mcfg, sig, len, 1);
+    build_header(linker, table_data, (void *)mcfg, sig, len, 1, NULL);
 }
 
 static void
@@ -1572,7 +1573,7 @@ build_dmar_q35(GArray *table_data, GArray *linker)
     drhd->address = cpu_to_le64(Q35_HOST_BRIDGE_IOMMU_ADDR);
 
     build_header(linker, table_data, (void *)(table_data->data + dmar_start),
-                 "DMAR", table_data->len - dmar_start, 1);
+                 "DMAR", table_data->len - dmar_start, 1, NULL);
 }
 
 static void
@@ -1587,7 +1588,7 @@ build_dsdt(GArray *table_data, GArray *linker, AcpiMiscInfo *misc)
 
     memset(dsdt, 0, sizeof *dsdt);
     build_header(linker, table_data, dsdt, "DSDT",
-                 misc->dsdt_size, 1);
+                 misc->dsdt_size, 1, NULL);
 }
 
 static GArray *
@@ -1656,6 +1657,13 @@ static bool acpi_has_iommu(void)
     intel_iommu = object_resolve_path_type("", TYPE_INTEL_IOMMU_DEVICE,
                                            &ambiguous);
     return intel_iommu && !ambiguous;
+}
+
+static bool acpi_has_nvdimm(void)
+{
+    PCMachineState *pcms = PC_MACHINE(qdev_get_machine());
+
+    return pcms->nvdimm;
 }
 
 static
@@ -1740,6 +1748,10 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
     if (acpi_has_iommu()) {
         acpi_add_table(table_offsets, tables_blob);
         build_dmar_q35(tables_blob, tables->linker);
+    }
+
+    if (acpi_has_nvdimm()) {
+        nvdimm_build_acpi(table_offsets, tables_blob, tables->linker);
     }
 
     /* Add tables supplied by user (if any) */

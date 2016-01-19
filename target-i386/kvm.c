@@ -111,6 +111,51 @@ bool kvm_allows_irq0_override(void)
     return !kvm_irqchip_in_kernel() || kvm_has_gsi_routing();
 }
 
+static int kvm_get_tsc(CPUState *cs)
+{
+    X86CPU *cpu = X86_CPU(cs);
+    CPUX86State *env = &cpu->env;
+    struct {
+        struct kvm_msrs info;
+        struct kvm_msr_entry entries[1];
+    } msr_data;
+    int ret;
+
+    if (env->tsc_valid) {
+        return 0;
+    }
+
+    msr_data.info.nmsrs = 1;
+    msr_data.entries[0].index = MSR_IA32_TSC;
+    env->tsc_valid = !runstate_is_running();
+
+    ret = kvm_vcpu_ioctl(CPU(cpu), KVM_GET_MSRS, &msr_data);
+    if (ret < 0) {
+        return ret;
+    }
+
+    env->tsc = msr_data.entries[0].data;
+    return 0;
+}
+
+static inline void do_kvm_synchronize_tsc(void *arg)
+{
+    CPUState *cpu = arg;
+
+    kvm_get_tsc(cpu);
+}
+
+void kvm_synchronize_all_tsc(void)
+{
+    CPUState *cpu;
+
+    if (kvm_enabled()) {
+        CPU_FOREACH(cpu) {
+            run_on_cpu(cpu, do_kvm_synchronize_tsc, cpu);
+        }
+    }
+}
+
 static struct kvm_cpuid2 *try_get_cpuid(KVMState *s, int max)
 {
     struct kvm_cpuid2 *cpuid;
@@ -729,7 +774,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
         && (env->features[FEAT_1_EDX] & (CPUID_MCE | CPUID_MCA)) ==
            (CPUID_MCE | CPUID_MCA)
         && kvm_check_extension(cs->kvm_state, KVM_CAP_MCE) > 0) {
-        uint64_t mcg_cap;
+        uint64_t mcg_cap, unsupported_caps;
         int banks;
         int ret;
 
@@ -739,18 +784,24 @@ int kvm_arch_init_vcpu(CPUState *cs)
             return ret;
         }
 
-        if (banks > MCE_BANKS_DEF) {
-            banks = MCE_BANKS_DEF;
+        if (banks < (env->mcg_cap & MCG_CAP_BANKS_MASK)) {
+            error_report("kvm: Unsupported MCE bank count (QEMU = %d, KVM = %d)",
+                         (int)(env->mcg_cap & MCG_CAP_BANKS_MASK), banks);
+            return -ENOTSUP;
         }
-        mcg_cap &= MCE_CAP_DEF;
-        mcg_cap |= banks;
-        ret = kvm_vcpu_ioctl(cs, KVM_X86_SETUP_MCE, &mcg_cap);
+
+        unsupported_caps = env->mcg_cap & ~(mcg_cap | MCG_CAP_BANKS_MASK);
+        if (unsupported_caps) {
+            error_report("warning: Unsupported MCG_CAP bits: 0x%" PRIx64,
+                         unsupported_caps);
+        }
+
+        env->mcg_cap &= mcg_cap | MCG_CAP_BANKS_MASK;
+        ret = kvm_vcpu_ioctl(cs, KVM_X86_SETUP_MCE, &env->mcg_cap);
         if (ret < 0) {
             fprintf(stderr, "KVM_X86_SETUP_MCE: %s", strerror(-ret));
             return ret;
         }
-
-        env->mcg_cap = mcg_cap;
     }
 
     qemu_add_vm_change_state_handler(cpu_update_state, env);

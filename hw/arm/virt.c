@@ -923,7 +923,7 @@ static void machvirt_init(MachineState *machine)
     qemu_irq pic[NUM_IRQS];
     MemoryRegion *sysmem = get_system_memory();
     int gic_version = vms->gic_version;
-    int n;
+    int n, max_cpus;
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     const char *cpu_model = machine->cpu_model;
     VirtBoardInfo *vbi;
@@ -941,8 +941,8 @@ static void machvirt_init(MachineState *machine)
     if (!gic_version) {
         gic_version = kvm_arm_vgic_probe();
         if (!gic_version) {
-            error_report("Unable to determine GIC version supported by host\n"
-                         "Probably KVM acceleration is not supported\n");
+            error_report("Unable to determine GIC version supported by host");
+            error_printf("KVM acceleration is probably not supported\n");
             exit(1);
         }
     }
@@ -954,6 +954,22 @@ static void machvirt_init(MachineState *machine)
 
     if (!vbi) {
         error_report("mach-virt: CPU %s not supported", cpustr[0]);
+        exit(1);
+    }
+
+    /* The maximum number of CPUs depends on the GIC version, or on how
+     * many redistributors we can fit into the memory map.
+     */
+    if (gic_version == 3) {
+        max_cpus = vbi->memmap[VIRT_GIC_REDIST].size / 0x20000;
+    } else {
+        max_cpus = GIC_NCPU;
+    }
+
+    if (smp_cpus > max_cpus) {
+        error_report("Number of SMP CPUs requested (%d) exceeds max CPUs "
+                     "supported by machine 'mach-virt' (%d)",
+                     smp_cpus, max_cpus);
         exit(1);
     }
 
@@ -974,7 +990,7 @@ static void machvirt_init(MachineState *machine)
         char *cpuopts = g_strdup(cpustr[1]);
 
         if (!oc) {
-            fprintf(stderr, "Unable to find CPU definition\n");
+            error_report("Unable to find CPU definition");
             exit(1);
         }
         cpuobj = object_new(object_class_get_name(oc));
@@ -1110,8 +1126,8 @@ static void virt_set_gic_version(Object *obj, const char *value, Error **errp)
     } else if (!strcmp(value, "host")) {
         vms->gic_version = 0; /* Will probe later */
     } else {
-        error_report("Invalid gic-version option value\n"
-                     "Allowed values are: 3, 2, host\n");
+        error_report("Invalid gic-version option value");
+        error_printf("Allowed gic-version values are: 3, 2, host\n");
         exit(1);
     }
 }
@@ -1155,10 +1171,11 @@ static void virt_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "ARM Virtual Machine",
     mc->init = machvirt_init;
-    /* Our maximum number of CPUs depends on how many redistributors
-     * we can fit into memory map
+    /* Start max_cpus at the maximum QEMU supports. We'll further restrict
+     * it later in machvirt_init, where we have more information about the
+     * configuration of the particular instance.
      */
-    mc->max_cpus = a15memmap[VIRT_GIC_REDIST].size / 0x20000;
+    mc->max_cpus = MAX_CPUMASK_BITS;
     mc->has_dynamic_sysbus = true;
     mc->block_default_type = IF_VIRTIO;
     mc->no_cdrom = 1;

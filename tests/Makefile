@@ -47,6 +47,8 @@ check-unit-y += tests/test-thread-pool$(EXESUF)
 gcov-files-test-thread-pool-y = thread-pool.c
 gcov-files-test-hbitmap-y = util/hbitmap.c
 check-unit-y += tests/test-hbitmap$(EXESUF)
+gcov-files-test-hbitmap-y = blockjob.c
+check-unit-y += tests/test-blockjob-txn$(EXESUF)
 check-unit-y += tests/test-x86-cpuid$(EXESUF)
 # all code tested by test-x86-cpuid is inside topology.h
 gcov-files-test-x86-cpuid-y =
@@ -81,6 +83,7 @@ check-unit-y += tests/test-crypto-cipher$(EXESUF)
 check-unit-$(CONFIG_GNUTLS) += tests/test-crypto-tlscredsx509$(EXESUF)
 check-unit-$(CONFIG_GNUTLS) += tests/test-crypto-tlssession$(EXESUF)
 check-unit-$(CONFIG_LINUX) += tests/test-qga$(EXESUF)
+check-unit-y += tests/test-timed-average$(EXESUF)
 
 check-block-$(CONFIG_POSIX) += tests/qemu-iotests-quick.sh
 
@@ -194,8 +197,9 @@ gcov-files-i386-y += hw/usb/hcd-xhci.c
 check-qtest-i386-y += tests/pc-cpu-test$(EXESUF)
 check-qtest-i386-y += tests/q35-test$(EXESUF)
 gcov-files-i386-y += hw/pci-host/q35.c
-ifeq ($(CONFIG_VHOST_NET),y)
-check-qtest-i386-$(CONFIG_LINUX) += tests/vhost-user-test$(EXESUF)
+check-qtest-i386-$(CONFIG_VHOST_NET_TEST_i386) += tests/vhost-user-test$(EXESUF)
+ifeq ($(CONFIG_VHOST_NET_TEST_i386),)
+check-qtest-x86_64-$(CONFIG_VHOST_NET_TEST_x86_64) += tests/vhost-user-test$(EXESUF)
 endif
 check-qtest-i386-y += tests/test-netfilter$(EXESUF)
 check-qtest-x86_64-y = $(check-qtest-i386-y)
@@ -265,7 +269,6 @@ qapi-schema += enum-dict-member.json
 qapi-schema += enum-int-member.json
 qapi-schema += enum-max-member.json
 qapi-schema += enum-missing-data.json
-qapi-schema += enum-union-clash.json
 qapi-schema += enum-wrong-data.json
 qapi-schema += escape-outside-string.json
 qapi-schema += escape-too-big.json
@@ -316,12 +319,17 @@ qapi-schema += redefined-builtin.json
 qapi-schema += redefined-command.json
 qapi-schema += redefined-event.json
 qapi-schema += redefined-type.json
+qapi-schema += reserved-command-q.json
+qapi-schema += reserved-member-has.json
+qapi-schema += reserved-member-q.json
+qapi-schema += reserved-member-u.json
+qapi-schema += reserved-type-kind.json
+qapi-schema += reserved-type-list.json
 qapi-schema += returns-alternate.json
 qapi-schema += returns-array-bad.json
 qapi-schema += returns-dict.json
 qapi-schema += returns-unknown.json
 qapi-schema += returns-whitelist.json
-qapi-schema += struct-base-clash-base.json
 qapi-schema += struct-base-clash-deep.json
 qapi-schema += struct-base-clash.json
 qapi-schema += struct-data-invalid.json
@@ -386,6 +394,7 @@ tests/test-coroutine$(EXESUF): tests/test-coroutine.o $(test-block-obj-y)
 tests/test-aio$(EXESUF): tests/test-aio.o $(test-block-obj-y)
 tests/test-rfifolock$(EXESUF): tests/test-rfifolock.o $(test-util-obj-y)
 tests/test-throttle$(EXESUF): tests/test-throttle.o $(test-block-obj-y)
+tests/test-blockjob-txn$(EXESUF): tests/test-blockjob-txn.o $(test-block-obj-y) $(test-util-obj-y)
 tests/test-thread-pool$(EXESUF): tests/test-thread-pool.o $(test-block-obj-y)
 tests/test-iov$(EXESUF): tests/test-iov.o $(test-util-obj-y)
 tests/test-hbitmap$(EXESUF): tests/test-hbitmap.o $(test-util-obj-y)
@@ -405,6 +414,8 @@ tests/test-vmstate$(EXESUF): tests/test-vmstate.o \
 	migration/vmstate.o migration/qemu-file.o migration/qemu-file-buf.o \
         migration/qemu-file-unix.o qjson.o \
 	$(test-qom-obj-y)
+tests/test-timed-average$(EXESUF): tests/test-timed-average.o qemu-timer.o \
+	$(test-util-obj-y)
 
 tests/test-qapi-types.c tests/test-qapi-types.h :\
 $(SRC_PATH)/tests/qapi-schema/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-types.py $(qapi-py)
@@ -525,6 +536,7 @@ tests/test-qemu-opts$(EXESUF): tests/test-qemu-opts.o $(test-util-obj-y)
 tests/test-write-threshold$(EXESUF): tests/test-write-threshold.o $(test-block-obj-y)
 tests/test-netfilter$(EXESUF): tests/test-netfilter.o $(qtest-obj-y)
 tests/ivshmem-test$(EXESUF): tests/ivshmem-test.o contrib/ivshmem-server/ivshmem-server.o $(libqos-pc-obj-y)
+tests/vhost-user-bridge$(EXESUF): tests/vhost-user-bridge.o
 
 ifeq ($(CONFIG_POSIX),y)
 LIBS += -lutil

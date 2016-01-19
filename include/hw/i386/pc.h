@@ -40,6 +40,7 @@ struct PCMachineState {
     OnOffAuto vmport;
     OnOffAuto smm;
     bool enforce_aligned_dimm;
+    bool nvdimm;
     ram_addr_t below_4g_mem_size, above_4g_mem_size;
 };
 
@@ -49,6 +50,7 @@ struct PCMachineState {
 #define PC_MACHINE_VMPORT           "vmport"
 #define PC_MACHINE_SMM              "smm"
 #define PC_MACHINE_ENFORCE_ALIGNED_DIMM "enforce-aligned-dimm"
+#define PC_MACHINE_NVDIMM           "nvdimm"
 
 /**
  * PCMachineClass:
@@ -60,7 +62,6 @@ struct PCMachineClass {
 
     /*< public >*/
     bool broken_reserved_end;
-    bool inter_dimm_gap;
     HotplugHandler *(*get_hotplug_handler)(MachineState *machine,
                                            DeviceState *dev);
 };
@@ -323,7 +324,49 @@ bool e820_get_entry(int, uint32_t, uint64_t *, uint64_t *);
             .driver   = "host" "-" TYPE_X86_CPU,\
             .property = "host-cache-info",\
             .value    = "on",\
+        },\
+        {\
+            .driver   = TYPE_X86_CPU,\
+            .property = "check",\
+            .value    = "off",\
+        },\
+        {\
+            .driver   = "qemu64" "-" TYPE_X86_CPU,\
+            .property = "sse4a",\
+            .value    = "on",\
+        },\
+        {\
+            .driver   = "qemu64" "-" TYPE_X86_CPU,\
+            .property = "abm",\
+            .value    = "on",\
+        },\
+        {\
+            .driver   = "qemu64" "-" TYPE_X86_CPU,\
+            .property = "popcnt",\
+            .value    = "on",\
+        },\
+        {\
+            .driver   = "qemu32" "-" TYPE_X86_CPU,\
+            .property = "popcnt",\
+            .value    = "on",\
+        },{\
+            .driver   = "Opteron_G2" "-" TYPE_X86_CPU,\
+            .property = "rdtscp",\
+            .value    = "on",\
+        },{\
+            .driver   = "Opteron_G3" "-" TYPE_X86_CPU,\
+            .property = "rdtscp",\
+            .value    = "on",\
+        },{\
+            .driver   = "Opteron_G4" "-" TYPE_X86_CPU,\
+            .property = "rdtscp",\
+            .value    = "on",\
+        },{\
+            .driver   = "Opteron_G5" "-" TYPE_X86_CPU,\
+            .property = "rdtscp",\
+            .value    = "on",\
         },
+
 
 #define PC_COMPAT_2_3 \
         PC_COMPAT_2_4 \
