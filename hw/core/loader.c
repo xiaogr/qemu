@@ -731,7 +731,7 @@ static void fw_cfg_resized(const char *id, uint64_t length, void *host)
     }
 }
 
-static void *rom_set_mr(Rom *rom, Object *owner, const char *name)
+static void *rom_set_mr(Rom *rom, Object *owner, const char *name, bool ro)
 {
     void *data;
 
@@ -740,7 +740,7 @@ static void *rom_set_mr(Rom *rom, Object *owner, const char *name)
                                       rom->datasize, rom->romsize,
                                       fw_cfg_resized,
                                       &error_fatal);
-    memory_region_set_readonly(rom->mr, true);
+    memory_region_set_readonly(rom->mr, ro);
     vmstate_register_ram_global(rom->mr);
 
     data = memory_region_get_ram_ptr(rom->mr);
@@ -811,7 +811,7 @@ int rom_add_file(const char *file, const char *fw_dir,
         snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
 
         if ((!option_rom || mc->option_rom_has_mr) && mc->rom_file_has_mr) {
-            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath);
+            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath, true);
         } else {
             data = rom->data;
         }
@@ -836,7 +836,8 @@ err:
 
 MemoryRegion *rom_add_blob(const char *name, const void *blob, size_t len,
                    size_t max_len, hwaddr addr, const char *fw_file_name,
-                   FWCfgReadCallback fw_callback, void *callback_opaque)
+                   FWCfgReadCallback fw_callback, void *callback_opaque,
+                   bool read_only)
 {
     MachineClass *mc = MACHINE_GET_CLASS(qdev_get_machine());
     Rom *rom;
@@ -854,10 +855,14 @@ MemoryRegion *rom_add_blob(const char *name, const void *blob, size_t len,
         char devpath[100];
         void *data;
 
-        snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
+        if (read_only) {
+            snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
+        } else {
+            snprintf(devpath, sizeof(devpath), "/ram@%s", fw_file_name);
+        }
 
         if (mc->rom_file_has_mr) {
-            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath);
+            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath, read_only);
             mr = rom->mr;
         } else {
             data = rom->data;
@@ -865,7 +870,7 @@ MemoryRegion *rom_add_blob(const char *name, const void *blob, size_t len,
 
         fw_cfg_add_file_callback(fw_cfg, fw_file_name,
                                  fw_callback, callback_opaque,
-                                 data, rom->datasize);
+                                 data, rom->datasize, read_only);
     }
     return mr;
 }

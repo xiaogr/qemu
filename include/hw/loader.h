@@ -72,7 +72,7 @@ MemoryRegion *rom_add_blob(const char *name, const void *blob, size_t len,
                            size_t max_len, hwaddr addr,
                            const char *fw_file_name,
                            FWCfgReadCallback fw_callback,
-                           void *callback_opaque);
+                           void *callback_opaque, bool read_only);
 int rom_add_elf_program(const char *name, void *data, size_t datasize,
                         size_t romsize, hwaddr addr);
 int rom_check_and_register_reset(void);
@@ -84,7 +84,7 @@ void hmp_info_roms(Monitor *mon, const QDict *qdict);
 #define rom_add_file_fixed(_f, _a, _i)          \
     rom_add_file(_f, NULL, _a, _i, false)
 #define rom_add_blob_fixed(_f, _b, _l, _a)      \
-    rom_add_blob(_f, _b, _l, _l, _a, NULL, NULL, NULL)
+    rom_add_blob(_f, _b, _l, _l, _a, NULL, NULL, NULL, true)
 
 #define PC_ROM_MIN_VGA     0xc0000
 #define PC_ROM_MIN_OPTION  0xc8000
