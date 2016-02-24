@@ -315,6 +315,7 @@ vhdx=""
 numa=""
 tcmalloc="no"
 jemalloc="no"
+unknown_balloon_stats="no"
 
 # parse CC options first
 for opt do
@@ -1142,6 +1143,10 @@ for opt do
   ;;
   --enable-jemalloc) jemalloc="yes"
   ;;
+  --enable-unknown-balloon-stats) unknown_balloon_stats="yes"
+  ;;
+  --disable-unknown-balloon-stats) unknown_balloon_stats="no"
+  ;;
   *)
       echo "ERROR: unknown option $opt"
       echo "Try '$0 --help' for more information"
@@ -1364,6 +1369,8 @@ disabled with --disable-FEATURE, default is enabled if available:
   numa            libnuma support
   tcmalloc        tcmalloc support
   jemalloc        jemalloc support
+  unknown-balloon-stats  report unknown balloon statistics counters
+  ;;
 
 NOTE: The object files are built at the place where configure is launched
 EOF
@@ -4790,6 +4797,7 @@ echo "bzip2 support     $bzip2"
 echo "NUMA host support $numa"
 echo "tcmalloc support  $tcmalloc"
 echo "jemalloc support  $jemalloc"
+echo "unknown balloon stat counters support  $unknown_balloon_stats"
 
 if test "$sdl_too_old" = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -5340,6 +5348,10 @@ echo "CONFIG_TRACE_FILE=$trace_file" >> $config_host_mak
 
 if test "$rdma" = "yes" ; then
   echo "CONFIG_RDMA=y" >> $config_host_mak
+fi
+
+if test "$unknown_balloon_stats" = "yes" ; then
+  echo "CONFIG_UNKNOWN_BALLOON_STATS=y" >> $config_host_mak
 fi
 
 # Hold two types of flag:

@@ -66,8 +66,7 @@ static const char *balloon_stat_names[] = {
  */
 static inline void reset_stats(VirtIOBalloon *dev)
 {
-    int i;
-    for (i = 0; i < VIRTIO_BALLOON_S_NR; dev->stats[i++] = -1);
+    dev->stats_cnt = 0;
 }
 
 static bool balloon_stats_supported(const VirtIOBalloon *s)
@@ -133,12 +132,22 @@ static void balloon_stats_get_all(Object *obj, Visitor *v, const char *name,
     if (err) {
         goto out_end;
     }
-    for (i = 0; i < VIRTIO_BALLOON_S_NR; i++) {
-        visit_type_uint64(v, balloon_stat_names[i], &s->stats[i], &err);
+    for (i = 0; i < s->stats_cnt; i++) {
+        if (s->stats[i].tag < VIRTIO_BALLOON_S_NR) {
+            visit_type_uint64(v, balloon_stat_names[s->stats[i].tag],
+                              &s->stats[i].val, &err);
+        } else {
+#if defined(CONFIG_UNKNOWN_BALLOON_STATS)
+            gchar *str = g_strdup_printf("x-stat-%04x", s->stats[i].tag);
+            visit_type_uint64(v, str, &s->stats[i].val, &err);
+            g_free(str);
+#endif
+        }
         if (err) {
             break;
         }
     }
+
     error_propagate(errp, err);
     err = NULL;
     visit_end_struct(v, &err);
@@ -282,10 +291,21 @@ static void virtio_balloon_receive_stats(VirtIODevice *vdev, VirtQueue *vq)
            == sizeof(stat)) {
         uint16_t tag = virtio_tswap16(vdev, stat.tag);
         uint64_t val = virtio_tswap64(vdev, stat.val);
+        int i;
 
         offset += sizeof(stat);
-        if (tag < VIRTIO_BALLOON_S_NR)
-            s->stats[tag] = val;
+        for (i = 0; i < s->stats_cnt; i++) {
+            if (s->stats[i].tag == tag) {
+                break;
+            }
+        }
+        if (i < ARRAY_SIZE(s->stats)) {
+            s->stats[i].tag = tag;
+            s->stats[i].val = val;
+            if (s->stats_cnt <= i) {
+                s->stats_cnt = i + 1;
+            }
+        }
     }
     s->stats_vq_offset = offset;
 
