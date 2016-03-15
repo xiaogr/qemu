@@ -256,6 +256,7 @@ sysconfdir="\${prefix}/etc"
 local_statedir="\${prefix}/var"
 confsuffix="/qemu"
 slirp="yes"
+unsafe_fw_cfg="no"
 oss_lib=""
 bsd="no"
 linux="no"
@@ -875,6 +876,8 @@ for opt do
   ;;
   --enable-vnc-png) vnc_png="yes"
   ;;
+  --enable-unsafe-fw-cfg) unsafe_fw_cfg="yes"
+  ;;
   --disable-slirp) slirp="no"
   ;;
   --disable-uuid) uuid="no"
@@ -1286,6 +1289,7 @@ Advanced options (experts only):
                            Available backends: $($python $source_path/scripts/tracetool.py --list-backends)
   --with-trace-file=NAME   Full PATH,NAME of file to store traces
                            Default:trace-<pid>
+  --enable-unsafe-fw-cfg   Enable loading fw cfg entries at unsafe paths (broken! don't use in production!)
   --disable-slirp          disable SLIRP userspace network connectivity
   --enable-tcg-interpreter enable TCG with bytecode interpreter (TCI)
   --oss-lib                path to OSS library
@@ -4910,6 +4914,9 @@ if test "$static" = "yes" ; then
 fi
 if test "$profiler" = "yes" ; then
   echo "CONFIG_PROFILER=y" >> $config_host_mak
+fi
+if test "$unsafe_fw_cfg" = "yes" ; then
+  echo "CONFIG_UNSAFE_FW_CFG=y" >> $config_host_mak
 fi
 if test "$slirp" = "yes" ; then
   echo "CONFIG_SLIRP=y" >> $config_host_mak
