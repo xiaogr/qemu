@@ -2321,6 +2321,9 @@ static int parse_fw_cfg(void *opaque, QemuOpts *opts, Error **errp)
     if (strncmp(name, "opt/", 4) != 0) {
         error_report("warning: externally provided fw_cfg item names "
                      "should be prefixed with \"opt/\"");
+#ifndef CONFIG_UNSAFE_FW_CFG
+        return -1;
+#endif
     }
     if (nonempty_str(str)) {
         size = strlen(str); /* NUL terminator NOT included in fw_cfg blob */
