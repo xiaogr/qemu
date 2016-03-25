@@ -837,7 +837,7 @@ static int virtio_blk_load_device(VirtIODevice *vdev, QEMUFile *f,
 
     while (qemu_get_sbyte(f)) {
         VirtIOBlockReq *req;
-        req = qemu_get_virtqueue_element(f, sizeof(VirtIOBlockReq));
+        req = qemu_get_virtqueue_element(vdev, f, sizeof(VirtIOBlockReq));
         virtio_blk_init_request(s, req);
         req->next = s->rq;
         s->rq = req;

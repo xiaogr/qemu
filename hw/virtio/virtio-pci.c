@@ -1212,6 +1212,14 @@ static int virtio_pci_query_nvectors(DeviceState *d)
     return proxy->nvectors;
 }
 
+static AddressSpace *virtio_pci_get_dma_as(DeviceState *d)
+{
+    VirtIOPCIProxy *proxy = VIRTIO_PCI(d);
+    PCIDevice *dev = &proxy->pci_dev;
+
+    return pci_get_address_space(dev);
+}
+
 static int virtio_pci_add_mem_cap(VirtIOPCIProxy *proxy,
                                    struct virtio_pci_cap *cap)
 {
@@ -2496,6 +2504,7 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     k->device_plugged = virtio_pci_device_plugged;
     k->device_unplugged = virtio_pci_device_unplugged;
     k->query_nvectors = virtio_pci_query_nvectors;
+    k->get_dma_as = virtio_pci_get_dma_as;
 }
 
 static const TypeInfo virtio_pci_bus_info = {
