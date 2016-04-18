@@ -23,7 +23,8 @@ static inline AddressSpace *virtio_get_dma_as(VirtIODevice *vdev)
     BusState *qbus = qdev_get_parent_bus(DEVICE(vdev));
     VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus);
 
-    if (k->get_dma_as) {
+    if ((vdev->host_features & (0x1ULL << VIRTIO_F_IOMMU_PLATFORM)) &&
+        k->get_dma_as) {
         return k->get_dma_as(qbus->parent);
     }
     return &address_space_memory;

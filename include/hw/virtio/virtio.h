@@ -228,7 +228,9 @@ typedef struct VirtIORNGConf VirtIORNGConf;
     DEFINE_PROP_BIT64("notify_on_empty", _state, _field,  \
                       VIRTIO_F_NOTIFY_ON_EMPTY, true), \
     DEFINE_PROP_BIT64("any_layout", _state, _field, \
-                      VIRTIO_F_ANY_LAYOUT, true)
+                      VIRTIO_F_ANY_LAYOUT, true), \
+    DEFINE_PROP_BIT64("iommu_platform", _state, _field, \
+                      VIRTIO_F_IOMMU_PLATFORM, false)
 
 hwaddr virtio_queue_get_desc_addr(VirtIODevice *vdev, int n);
 hwaddr virtio_queue_get_avail_addr(VirtIODevice *vdev, int n);

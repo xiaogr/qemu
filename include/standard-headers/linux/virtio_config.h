@@ -61,4 +61,6 @@
 /* v1.0 compliant. */
 #define VIRTIO_F_VERSION_1		32
 
+/* Do not bypass the IOMMU (if configured) */
+#define VIRTIO_F_IOMMU_PLATFORM		33
 #endif /* _LINUX_VIRTIO_CONFIG_H */
