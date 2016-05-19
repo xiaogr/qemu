@@ -353,7 +353,7 @@ static void acpi_dsdt_add_power_button(Aml *scope)
 
 /* RSDP */
 static GArray *
-build_rsdp(GArray *rsdp_table, GArray *linker, unsigned rsdt)
+build_rsdp(GArray *rsdp_table, BIOSLinker *linker, unsigned rsdt)
 {
     AcpiRsdpDescriptor *rsdp = acpi_data_push(rsdp_table, sizeof *rsdp);
 
@@ -382,7 +382,7 @@ build_rsdp(GArray *rsdp_table, GArray *linker, unsigned rsdt)
 }
 
 static void
-build_spcr(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
+build_spcr(GArray *table_data, BIOSLinker *linker, VirtGuestInfo *guest_info)
 {
     AcpiSerialPortConsoleRedirection *spcr;
     const MemMapEntry *uart_memmap = &guest_info->memmap[VIRT_UART];
@@ -415,7 +415,7 @@ build_spcr(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
 }
 
 static void
-build_srat(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
+build_srat(GArray *table_data, BIOSLinker *linker, VirtGuestInfo *guest_info)
 {
     AcpiSystemResourceAffinityTable *srat;
     AcpiSratProcessorGiccAffinity *core;
@@ -455,13 +455,12 @@ build_srat(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
         mem_base += numa_info[i].node_mem;
     }
 
-    build_header(linker, table_data,
-                 (void *)(table_data->data + srat_start), "SRAT",
+    build_header(linker, table_data, (void *)srat, "SRAT",
                  table_data->len - srat_start, 3, NULL, NULL);
 }
 
 static void
-build_mcfg(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
+build_mcfg(GArray *table_data, BIOSLinker *linker, VirtGuestInfo *guest_info)
 {
     AcpiTableMcfg *mcfg;
     const MemMapEntry *memmap = guest_info->memmap;
@@ -481,7 +480,7 @@ build_mcfg(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
 
 /* GTDT */
 static void
-build_gtdt(GArray *table_data, GArray *linker)
+build_gtdt(GArray *table_data, BIOSLinker *linker)
 {
     int gtdt_start = table_data->len;
     AcpiGenericTimerTable *gtdt;
@@ -507,7 +506,7 @@ build_gtdt(GArray *table_data, GArray *linker)
 
 /* MADT */
 static void
-build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
+build_madt(GArray *table_data, BIOSLinker *linker, VirtGuestInfo *guest_info)
 {
     int madt_start = table_data->len;
     const MemMapEntry *memmap = guest_info->memmap;
@@ -566,7 +565,7 @@ build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
 
 /* FADT */
 static void
-build_fadt(GArray *table_data, GArray *linker, unsigned dsdt)
+build_fadt(GArray *table_data, BIOSLinker *linker, unsigned dsdt)
 {
     AcpiFadtDescriptorRev5_1 *fadt = acpi_data_push(table_data, sizeof(*fadt));
 
@@ -591,7 +590,7 @@ build_fadt(GArray *table_data, GArray *linker, unsigned dsdt)
 
 /* DSDT */
 static void
-build_dsdt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
+build_dsdt(GArray *table_data, BIOSLinker *linker, VirtGuestInfo *guest_info)
 {
     Aml *scope, *dsdt;
     const MemMapEntry *memmap = guest_info->memmap;
@@ -730,7 +729,7 @@ static void virt_acpi_build_update(void *build_opaque)
 
     acpi_ram_update(build_state->table_mr, tables.table_data);
     acpi_ram_update(build_state->rsdp_mr, tables.rsdp);
-    acpi_ram_update(build_state->linker_mr, tables.linker);
+    acpi_ram_update(build_state->linker_mr, tables.linker->cmd_blob);
 
 
     acpi_build_tables_cleanup(&tables, true);
@@ -788,7 +787,8 @@ void virt_acpi_setup(VirtGuestInfo *guest_info)
     assert(build_state->table_mr != NULL);
 
     build_state->linker_mr =
-        acpi_add_rom_blob(build_state, tables.linker, "etc/table-loader", 0);
+        acpi_add_rom_blob(build_state, tables.linker->cmd_blob,
+                          "etc/table-loader", 0);
 
     fw_cfg_add_file(guest_info->fw_cfg, ACPI_BUILD_TPMLOG_FILE,
                     tables.tcpalog->data, acpi_data_len(tables.tcpalog));
